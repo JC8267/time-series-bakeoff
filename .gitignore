@@ -10,6 +10,8 @@ experiments.csv
 # Business data — keep local only, never push
 daily_sales_data.csv
 opening_info.csv
+complete_opening_info.csv
+bu_level_sls.csv
 
 # Generated run outputs and work dirs (contain absolute sales figures)
 outputs*/
