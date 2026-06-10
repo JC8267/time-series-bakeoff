@@ -4,7 +4,7 @@ Last updated: 2026-06-10
 
 Validation fold note: every WAPE/bias claim below should be read with its fold count. The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon, phase 3 trained stack weights on the earlier aligned cutoff and evaluated on 2 held-out cutoffs, and phase 5 used 1 final holdout. The latest 180/365 validation used 3 rolling cutoffs per horizon. Fewer-fold sensitivity tests can make `seasonal_naive_lag_364` win; treat those as sensitivity checks unless the ensemble candidates are rebuilt and scored on the same folds.
 
-2026-06-10 update: a 5-fold nested final validation at 91 days (`run_multifold_final_validation.py`, run_id `20260610T042656Z`, outputs in `outputs_multifold_91d_validation/`) settled the fragile 91-day ranking. See the 91-day card below; the production recommendation at 91 days is now `seasonal_naive_lag_364`.
+2026-06-10 update: multi-fold nested final validations settled the fragile short/medium-horizon rankings (`run_multifold_final_validation.py`; 91 days: 5 folds, run_id `20260610T042656Z`, `outputs_multifold_91d_validation/`; 28 days: 6 non-overlapping folds, run_id `20260610T044622Z`, `outputs_multifold_28d_validation/`). The production recommendation at both 28 and 91 days is now `seasonal_naive_lag_364`. See the per-card verdicts below.
 
 ## `final_28d_extra_trees_opening_timesfm_pool`
 
@@ -29,11 +29,21 @@ Notes:
 - Uses an opening-aware feature set through the ML forecast pipeline.
 - The Statsmodels-fixed rerun did not change this recommendation.
 
+**2026-06-10 multi-fold verdict: prefer `seasonal_naive_lag_364` at 28 days. Extra Trees won only 2 of 6 folds.**
+
+Provenance: `run_multifold_final_validation.py --horizon 28`, run_id `20260610T044622Z`, `outputs_multifold_28d_validation/` (6 non-overlapping 28-day holdout folds, cutoffs 2025-10-15 to 2026-03-04).
+
+- `seasonal_naive_lag_364`: mean WAPE 0.0680. `sklearn_extra_trees`: mean WAPE 0.0865, winning 2 of 6 folds (mean diff +0.018).
+- The phase-5 single-holdout win below is clean for standalone Extra Trees (no weight fitting) and reproduces exactly on the matching fold (0.0314 vs naive 0.0386) — but it is 1 of 6 folds and not representative.
+- Extra Trees is volatile: competitive on most folds but failed badly on the December 2025 window (WAPE 0.182 vs naive 0.125), underforecasting through the holiday season. Do not use it unhedged for windows that span major holidays.
+- Production read: use `seasonal_naive_lag_364` as the 28-day production forecast. Keep Extra Trees as the opening-aware scenario/counterfactual model, reported beside the seasonal benchmark.
+
 Latest validation:
 
 - Phase 5 holdout WAPE: 0.0314.
 - Phase 5 holdout bias: 0.0020.
 - Validation folds: 1 final holdout window; supporting phase-1 rerun used 3 rolling cutoffs.
+- Caveat: `seasonal_naive_lag_364` beat Extra Trees on 4 of 6 folds of the 2026-06-10 multi-fold validation (run_id `20260610T044622Z`). Treat `seasonal_naive_lag_364` as the 28-day production model.
 
 ## `final_91d_convex_stack_opening_timesfm_pool`
 

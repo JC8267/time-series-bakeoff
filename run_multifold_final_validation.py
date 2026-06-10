@@ -27,8 +27,11 @@ import run_bakeoff
 from run_bakeoff import (
     DEGRADED_MODELS,
     MIN_TRAIN_DAYS,
+    SEED,
     ets_forecast,
+    load_openings,
     load_sales,
+    predict_sklearn_recursive,
     seasonal_naive,
     set_seeds,
     statsforecast_forecast,
@@ -61,13 +64,26 @@ def build_grid(df: pd.DataFrame, horizon: int, step: int) -> list[pd.Timestamp]:
     return sorted(cutoffs)
 
 
-def make_predictors(pool: list[str], horizon: int, timesfm_context: int, chronos_context: int) -> dict:
+def future_dates(train: pd.DataFrame, horizon: int) -> pd.Series:
+    return pd.Series(pd.date_range(train["ds"].max() + pd.Timedelta(days=1), periods=horizon, freq="D"))
+
+
+def make_predictors(pool: list[str], horizon: int, timesfm_context: int, chronos_context: int, openings: pd.DataFrame | None = None) -> dict:
     predictors = {}
     for name in pool:
         if name == "seasonal_naive_lag_364":
             predictors[name] = lambda train, h: seasonal_naive(train, h, 364)
         elif name == "statsmodels_ets_weekly":
             predictors[name] = lambda train, h: ets_forecast(train, h)
+        elif name == "sklearn_extra_trees":
+            from sklearn.ensemble import ExtraTreesRegressor
+
+            predictors[name] = lambda train, h: predict_sklearn_recursive(
+                lambda: ExtraTreesRegressor(n_estimators=250, min_samples_leaf=3, random_state=SEED, n_jobs=1),
+                train,
+                future_dates(train, h),
+                openings,
+            )
         elif name.startswith("statsforecast_"):
             predictors[name] = lambda train, h, n=name: statsforecast_forecast(train, h, n)
         elif name == "timesfm_2_5":
@@ -246,6 +262,7 @@ def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary:
         "horizon": args.horizon,
         "n_folds": n_folds,
         "grid_step_days": args.grid_step,
+        "opening_info_file": args.opening_info,
         "pool": sorted(grid_preds["model_name"].unique().tolist()),
         "grid_cutoffs": [str(pd.Timestamp(c).date()) for c in sorted(grid_preds["cutoff"].unique())],
         "fold_cutoffs": [str(pd.Timestamp(c).date()) for c in sorted(fold_metrics["fold_cutoff"].unique())],
@@ -267,6 +284,7 @@ def main() -> None:
     parser.add_argument("--timesfm-context", type=int, default=1024)
     parser.add_argument("--chronos-context", type=int, default=2048)
     parser.add_argument("--max-grid-cutoffs", type=int, default=None, help="Limit grid to the most recent N cutoffs (smoke tests).")
+    parser.add_argument("--opening-info", default=None, help="Optional unit-opening CSV; required for opening-aware pool models like sklearn_extra_trees.")
     parser.add_argument("--output-dir", default="outputs_multifold_91d_validation")
     args = parser.parse_args()
 
@@ -274,6 +292,7 @@ def main() -> None:
     pool = [m.strip() for m in args.pool.split(",") if m.strip()]
     if BENCHMARK not in pool:
         raise ValueError(f"Pool must include the benchmark {BENCHMARK}.")
+    openings = load_openings(Path(args.opening_info)) if args.opening_info else None
     df = load_sales(Path(args.sales_csv))
     grid = build_grid(df, args.horizon, args.grid_step)
     if args.max_grid_cutoffs:
@@ -281,7 +300,7 @@ def main() -> None:
     fold_cutoffs = grid[-args.n_folds :]
     print(f"Grid: {len(grid)} cutoffs from {grid[0].date()} to {grid[-1].date()}; folds: {[str(c.date()) for c in fold_cutoffs]}", flush=True)
 
-    predictors = make_predictors(pool, args.horizon, args.timesfm_context, args.chronos_context)
+    predictors = make_predictors(pool, args.horizon, args.timesfm_context, args.chronos_context, openings)
     grid_preds = run_grid(df, grid, args.horizon, predictors)
     fold_metrics, fold_metadata = run_folds(grid_preds, pool, fold_cutoffs, args.horizon)
     summary = summarize(fold_metrics)
