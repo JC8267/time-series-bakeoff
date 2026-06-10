@@ -22,7 +22,12 @@ fitting, so every fold is honest):
 - pooled_lightgbm: one global direct model across (market, lead-day) rows
   with calendar, seasonal lags, recent level, days-since-open, sqm, and
   unit-type features; trained per fold on pseudo-cutoffs strictly before
-  the fold cutoff (targets capped at the cutoff), so it is leak-free
+  the fold cutoff (targets capped at the cutoff), so it is leak-free.
+  Opening dates, sqm, and unit type are treated as KNOWN-FUTURE covariates:
+  physical openings are planned years ahead, so days_since_open for dates
+  after a historical cutoff reflects information genuinely available at
+  that cutoff. If an opening date in complete_opening_info.csv was ever a
+  surprise (not planned in advance), this assumption breaks for that market.
 
 The bu-total file covers ~88% of daily_sales_data.csv (see DATA.md); totals
 here are on the bu-total's own terms and are not comparable to the aggregate

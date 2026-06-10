@@ -51,20 +51,33 @@ def blend_from_wide(wide: pd.DataFrame) -> np.ndarray:
 def residual_quantiles(grid_path: Path, interval_windows: int) -> dict[str, np.ndarray]:
     preds = pd.read_csv(grid_path, parse_dates=["cutoff", "ds"])
     wide = preds.pivot_table(index=["cutoff", "ds", "actual"], columns="model_name", values="forecast").reset_index()
-    missing = {"seasonal_naive_lag_364", "timesfm_2_5"} - set(wide.columns)
-    if missing:
-        raise ValueError(f"{grid_path} is missing grid forecasts for {sorted(missing)}.")
+    if "seasonal_naive_lag_364" not in wide.columns:
+        raise ValueError(f"{grid_path} is missing seasonal_naive_lag_364 grid forecasts.")
     recent_cutoffs = sorted(wide["cutoff"].unique())[-interval_windows:]
     recent = wide[wide["cutoff"].isin(recent_cutoffs)]
+    pairs = [("seasonal_naive", recent["seasonal_naive_lag_364"].to_numpy())]
+    if "timesfm_2_5" in wide.columns:
+        pairs.append(("blend", blend_from_wide(recent)))
     out = {}
-    for name, forecast in [
-        ("seasonal_naive", recent["seasonal_naive_lag_364"].to_numpy()),
-        ("blend", blend_from_wide(recent)),
-    ]:
+    for name, forecast in pairs:
         residuals = recent["actual"].to_numpy() - forecast
         out[name] = np.quantile(residuals, QUANTILE_LEVELS)
     out["n_windows"] = len(recent_cutoffs)
     return out
+
+
+def build_horizon_rows(naive: np.ndarray, tfm: np.ndarray | None, horizon: int, dates: pd.Series, qs: dict, training_cutoff: pd.Timestamp) -> list[dict]:
+    """Production rows always; challenger rows only when a TimesFM forecast exists.
+
+    The seasonal-naive production package must never depend on TimesFM being
+    loadable -- pass tfm=None to skip the challenger.
+    """
+    interval_note = f"own_residual_quantiles_recent_{qs['n_windows']}_grid_windows"
+    rows = forecast_rows(f"final_{horizon}d_seasonal_naive_production", dates, naive, qs["seasonal_naive"], training_cutoff, interval_note)
+    if tfm is not None and "blend" in qs:
+        blend = BLEND_NAIVE_WEIGHT * naive + (1 - BLEND_NAIVE_WEIGHT) * tfm
+        rows.extend(forecast_rows(f"challenger_{horizon}d_blend_snl75_tfm25", dates, blend, qs["blend"], training_cutoff, interval_note))
+    return rows
 
 
 def forecast_rows(model_name: str, dates: pd.Series, forecast: np.ndarray, qs: np.ndarray, training_cutoff: pd.Timestamp, interval_note: str) -> list[dict]:
@@ -107,9 +120,15 @@ def main() -> None:
     if missing:
         raise ValueError(f"No multifold grid found for horizons {missing}; run run_multifold_final_validation.py first.")
 
-    from run_prophet_timesfm_benchmark import forecast_timesfm, load_timesfm
+    timesfm_model = None
+    challenger_skipped_reason = None
+    try:
+        from run_prophet_timesfm_benchmark import load_timesfm
 
-    timesfm_model = load_timesfm(args.timesfm_context, max(horizons))
+        timesfm_model = load_timesfm(args.timesfm_context, max(horizons))
+    except Exception as exc:
+        challenger_skipped_reason = f"TimesFM unavailable: {type(exc).__name__}: {exc}"
+        print(f"WARNING [production]: {challenger_skipped_reason}. Emitting seasonal-naive production rows only.", flush=True)
 
     rows = []
     interval_meta = {}
@@ -121,11 +140,16 @@ def main() -> None:
         }
         dates = pd.Series(pd.date_range(training_cutoff + pd.Timedelta(days=1), periods=horizon, freq="D"))
         naive = seasonal_naive(df, horizon, 364)
-        tfm = forecast_timesfm(timesfm_model, df, horizon, args.timesfm_context)["forecast"].to_numpy()
-        blend = BLEND_NAIVE_WEIGHT * naive + (1 - BLEND_NAIVE_WEIGHT) * tfm
-        interval_note = f"own_residual_quantiles_recent_{qs['n_windows']}_grid_windows"
-        rows.extend(forecast_rows(f"final_{horizon}d_seasonal_naive_production", dates, naive, qs["seasonal_naive"], training_cutoff, interval_note))
-        rows.extend(forecast_rows(f"challenger_{horizon}d_blend_snl75_tfm25", dates, blend, qs["blend"], training_cutoff, interval_note))
+        tfm = None
+        if timesfm_model is not None:
+            try:
+                from run_prophet_timesfm_benchmark import forecast_timesfm
+
+                tfm = forecast_timesfm(timesfm_model, df, horizon, args.timesfm_context)["forecast"].to_numpy()
+            except Exception as exc:
+                challenger_skipped_reason = f"TimesFM forecast failed at horizon {horizon}: {type(exc).__name__}: {exc}"
+                print(f"WARNING [production]: {challenger_skipped_reason}.", flush=True)
+        rows.extend(build_horizon_rows(naive, tfm, horizon, dates, qs, training_cutoff))
 
     out = pd.DataFrame(rows)
     output_dir = Path(args.output_dir)
@@ -153,6 +177,8 @@ def main() -> None:
         "blend_naive_weight": BLEND_NAIVE_WEIGHT,
         "interval_windows": args.interval_windows,
         "interval_sources": interval_meta,
+        "challenger_included": challenger_skipped_reason is None,
+        "challenger_skipped_reason": challenger_skipped_reason,
         "planned_openings_not_in_forecast": planned_openings,
         "basis": "2026-06-10 multi-fold verdicts; see model_cards.md and model_usage_plan.md",
     }

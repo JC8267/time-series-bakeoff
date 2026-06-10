@@ -62,9 +62,17 @@ def build_outputs(sales: pd.DataFrame, meta: pd.DataFrame) -> tuple[pd.DataFrame
     panel["pre_opening_ecomm"] = panel["has_physical"] & (panel["ds"] < panel["open_date"])
 
     market_rows = []
+    missing_rows = []
     for market, g in panel.groupby("sub_market_no"):
         open_date = g["open_date"].iloc[0]
         pre = g[g["pre_opening_ecomm"]]
+        # Dates inside a market's own span with no row at all: real closure days
+        # are usually recorded as zeros, so absent dates may be extract gaps.
+        # Downstream zero-fill (run_market_bakeoff.load_panel) treats them as
+        # zero-sales days; this audit makes that assumption inspectable.
+        expected = pd.date_range(g["ds"].min(), g["ds"].max(), freq="D")
+        missing = expected.difference(g["ds"])
+        missing_rows.extend({"sub_market_no": market, "missing_ds": d} for d in missing)
         market_rows.append(
             {
                 "sub_market_no": market,
@@ -75,31 +83,46 @@ def build_outputs(sales: pd.DataFrame, meta: pd.DataFrame) -> tuple[pd.DataFrame
                 "first_ds": g["ds"].min().date(),
                 "last_ds": g["ds"].max().date(),
                 "rows": len(g),
+                "missing_days_in_span": int(len(missing)),
                 "pre_opening_days": int(len(pre)),
                 "pre_opening_median_daily": float(pre["y"].median()) if len(pre) else None,
                 "post_opening_days": int((~g["pre_opening_ecomm"]).sum()) if pd.notna(open_date) else None,
             }
         )
-    return panel, pd.DataFrame(market_rows)
+    return panel, pd.DataFrame(market_rows), pd.DataFrame(missing_rows)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sales-csv", default="bu_level_sls.csv")
     parser.add_argument("--opening-info", default="complete_opening_info.csv", help="xlsx network metadata (despite the .csv extension).")
-    parser.add_argument("--max-date", default=None, help="Drop rows after this date; defaults to today.")
+    parser.add_argument("--max-date", default=None, help="Drop rows after this date; defaults to yesterday (the last fully closed business day -- today's rows are usually a partial day).")
     parser.add_argument("--output-dir", default="outputs_market_prep")
     args = parser.parse_args()
 
-    max_date = pd.Timestamp(args.max_date) if args.max_date else pd.Timestamp.now().normalize()
+    max_date = pd.Timestamp(args.max_date) if args.max_date else pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
     sales, meta, dropped = load_panel(Path(args.sales_csv), Path(args.opening_info), max_date)
-    panel, markets = build_outputs(sales, meta)
+    panel, markets, missing = build_outputs(sales, meta)
+
+    # A final day far below the trailing same-weekday level usually means the
+    # extract caught a partial business day; anchor forecasts one day earlier.
+    daily_total = panel.groupby("ds")["y"].sum().sort_index()
+    last_ds = daily_total.index.max()
+    same_dow = daily_total[daily_total.index.dayofweek == last_ds.dayofweek].iloc[-5:-1]
+    if len(same_dow) >= 3 and daily_total.iloc[-1] < 0.5 * same_dow.median():
+        print(
+            f"WARNING [prepare]: last panel day {last_ds.date()} totals less than half its trailing "
+            f"same-weekday median -- likely a partial day. Re-run with --max-date {(last_ds - pd.Timedelta(days=1)).date()}.",
+            flush=True,
+        )
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     panel.to_csv(output_dir / "market_daily_panel.csv", index=False)
     markets.to_csv(output_dir / "market_metadata.csv", index=False)
     dropped.to_csv(output_dir / "dropped_rows_audit.csv", index=False)
+    missing.to_csv(output_dir / "missing_dates_audit.csv", index=False)
+    print(f"missing market-dates inside spans: {len(missing)} (see missing_dates_audit.csv)")
     openings_out = meta[meta["open_date"].notna()][["sub_market_no", "open_date", "total_sqm", "unit_type"]].rename(
         columns={"sub_market_no": "unit_id"}
     )

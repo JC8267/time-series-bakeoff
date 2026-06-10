@@ -22,16 +22,10 @@ Re-run the leak-free multi-fold validation for a horizon (required before packag
 python run_multifold_final_validation.py --horizon 91 --n-folds 5 --output-dir outputs_multifold_91d_validation
 ```
 
-Build the current production package:
+Build the legacy stack/ML sensitivity package (demoted models — NOT production; see `model_usage_plan.md`):
 
 ```powershell
 python run_phase6.py --sales-csv daily_sales_data.csv --opening-info opening_info.csv --phase3-metadata outputs_opening_phase3_timesfm/phase3_metadata.json --phase4-predictions outputs_opening_phase4_timesfm/phase4_calibrated_predictions.csv --horizons 28,91 --output-dir outputs_opening_phase6_timesfm_updated
-```
-
-Build the long-horizon package:
-
-```powershell
-python run_phase6.py --sales-csv daily_sales_data.csv --opening-info opening_info.csv --phase3-metadata outputs_opening_phase3_timesfm/phase3_metadata.json --phase4-predictions outputs_opening_phase4_timesfm/phase4_calibrated_predictions.csv --horizons 180,365 --output-dir outputs_opening_phase6_long
 ```
 
 ## Market-Level Pipeline
