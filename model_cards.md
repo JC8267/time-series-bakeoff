@@ -1,8 +1,10 @@
 # Production Model Cards
 
-Last updated: 2026-06-01
+Last updated: 2026-06-10
 
 Validation fold note: every WAPE/bias claim below should be read with its fold count. The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon, phase 3 trained stack weights on the earlier aligned cutoff and evaluated on 2 held-out cutoffs, and phase 5 used 1 final holdout. The latest 180/365 validation used 3 rolling cutoffs per horizon. Fewer-fold sensitivity tests can make `seasonal_naive_lag_364` win; treat those as sensitivity checks unless the ensemble candidates are rebuilt and scored on the same folds.
+
+2026-06-10 update: a 5-fold nested final validation at 91 days (`run_multifold_final_validation.py`, run_id `20260610T042656Z`, outputs in `outputs_multifold_91d_validation/`) settled the fragile 91-day ranking. See the 91-day card below; the production recommendation at 91 days is now `seasonal_naive_lag_364`.
 
 ## `final_28d_extra_trees_opening_timesfm_pool`
 
@@ -55,16 +57,18 @@ Notes:
 - TimesFM improved the 91-day ensemble in final holdout testing.
 - The latest rerun also added StatsForecast and Chronos-Bolt candidates. Chronos-Bolt did not improve the 91-day final holdout, but remains available as a diagnostic foundation-model comparator.
 - The Statsmodels-fixed rerun confirmed `statsmodels_ets_weekly` and `statsmodels_sarimax_weekly` now run, but neither improved the 91-day winner.
-- This is the preferred 91-day production forecast.
 - The selected stack is not meaningfully opening-sensitive in its current fitted form. Latest convex weights are mostly `seasonal_naive_lag_364` and `timesfm_2_5`, with zero weight on Chronos/MSTL and no opening-feature ML model in the final stack.
 
-**Winner is fragile at 91 days — the stack and seasonal naive are within noise.**
+**2026-06-10 multi-fold verdict: prefer `seasonal_naive_lag_364` at 91 days. The stack strategy lost all 5 nested validation folds.**
 
-- The stack's lead depends on which folds you trust. On the single phase-5 final holdout, `phase3_heldout_cutoffs_convex_stack` wins (0.0507 WAPE) but only by **0.0043** over `seasonal_naive_lag_364` (0.0550).
-- On the 3 rolling cutoffs in the phase-1 backtest, the ranking **flips**: `seasonal_naive_lag_364` wins (0.0861 WAPE) and beats every ensemble (best ensemble 0.0915–0.0927).
-- Practical read: at 91 days the convex stack ≈ seasonal naive within noise. Prefer the stack when the TimesFM blend is useful for a production forecast; otherwise the zero-cost, fully-interpretable `seasonal_naive_lag_364` is a defensible production choice. Do not present the stack as a decisive accuracy winner on one holdout window.
+Provenance: `run_multifold_final_validation.py`, run_id `20260610T042656Z`, `outputs_multifold_91d_validation/` (5 rolling 91-day holdout folds, cutoffs 2025-09-10 to 2025-12-31 stepped 28 days; folds overlap, so they are not fully independent; stack weights refit per fold on only the backtest windows ending at or before that fold's cutoff).
+
+- Nested convex stack (the honest version of the production strategy): mean WAPE 0.0918, **0/5 wins** vs `seasonal_naive_lag_364` (mean WAPE 0.0757), losing every fold by +0.014 to +0.022.
+- Root cause is weight instability, not blending per se. On the 2024 to mid-2025 fitting windows TimesFM dominated (inner WAPE ~0.08 vs ~0.13-0.15 for seasonal naive), so every nested fit put ~90% weight on TimesFM; on the late-2025 holdout windows the regime flipped and seasonal naive won everywhere. The strategy chases stale relative performance.
+- The earlier phase-5 single-holdout "win" (0.0507 vs 0.0550) is contaminated: phase 3 fit the production weights at cutoff 2025-11-01, whose 91-day fitting window (through 2026-01-31) overlaps the phase-5 holdout (2026-01-01 to 2026-04-01) by 31 days.
+- The frozen shipped weights (0.62 seasonal naive / 0.38 TimesFM) do beat seasonal naive on all 5 folds by small margins (0.0013-0.0091 WAPE), but those weights postdate 4 of the 5 folds and were fit on data overlapping the 5th, so this is suggestive, not validated. If a blend is wanted, pre-register a fixed ratio and validate it on future folds before shipping it as the winner.
+- Production read: use `seasonal_naive_lag_364` as the 91-day production forecast. Keep this stack as a sensitivity/diagnostic model and for cases where TimesFM signal is explicitly wanted alongside the seasonal baseline.
 - For opening or ramp-timing counterfactuals at 91 days, do not rely on this stack alone. Pair it with an explicitly opening-sensitive ML scenario model or rerun phase 5 with the opening-sensitive model retained as a named candidate.
-- To firm this up, add more final-holdout folds at 91 days and re-rank the stack against seasonal naive on the same folds before committing.
 
 **Interval note:** phase 4 was rerun with standalone `timesfm_2_5` included in interval calibration. The corrected phase-5 TimesFM interval metrics are now usable: 91-day standalone TimesFM coverage is 0.857 at the 80% level and 0.945 at the 95% level. The production stack interval metrics remain calibrated from the stack's own phase-3 residuals (`phase3_heldout_cutoffs_convex_stack`).
 
@@ -74,7 +78,7 @@ Latest validation:
 - Phase 5 holdout bias: -0.0116.
 - Phase 5 holdout interval coverage: 0.857 at 80%, 0.956 at 95%.
 - Validation folds: 1 final holdout window; supporting phase-1/foundation reruns used 3 rolling cutoffs and phase 3 evaluated stacks on 2 held-out cutoffs.
-- Caveat: seasonal_naive_lag_364 wins the 3-cutoff phase-1 backtest at this horizon (0.0861 vs the stack/ensembles at 0.09+); the stack's win is confined to the single phase-5 holdout.
+- Caveat: the phase-5 holdout WAPE above is contaminated by the weight-fitting overlap described in the multi-fold verdict, and `seasonal_naive_lag_364` beat the nested stack on all 5 folds of the 2026-06-10 multi-fold validation (run_id `20260610T042656Z`). Treat `seasonal_naive_lag_364` as the 91-day production model.
 
 ## `final_180d_seasonal_naive_benchmark`
 
