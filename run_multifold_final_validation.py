@@ -302,6 +302,10 @@ def main() -> None:
 
     predictors = make_predictors(pool, args.horizon, args.timesfm_context, args.chronos_context, openings)
     grid_preds = run_grid(df, grid, args.horizon, predictors)
+    # Persist the expensive grid immediately so a fold-stage failure cannot lose it.
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    grid_preds.to_csv(output_dir / "multifold_grid_predictions.csv", index=False)
     fold_metrics, fold_metadata = run_folds(grid_preds, pool, fold_cutoffs, args.horizon)
     summary = summarize(fold_metrics)
     write_outputs(grid_preds, fold_metrics, summary, fold_metadata, Path(args.output_dir), args)

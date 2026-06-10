@@ -29,8 +29,16 @@ def growth_ratio(y: pd.Series, cutoff: pd.Timestamp, k: int, cap: float | None =
     return float(r)
 
 
-def seasonal_values(y: pd.Series, dates: pd.DatetimeIndex, lag: int) -> np.ndarray:
-    return np.asarray([y.get(d - pd.Timedelta(days=lag), np.nan) for d in dates])
+def seasonal_values(y: pd.Series, dates: pd.DatetimeIndex, lag: int, cutoff: pd.Timestamp) -> np.ndarray:
+    # Wrap references that land after the cutoff back a further season, mirroring
+    # the tiling behavior of seasonal_naive (matters when horizon > lag).
+    vals = []
+    for d in dates:
+        ref = d - pd.Timedelta(days=lag)
+        while ref > cutoff:
+            ref -= pd.Timedelta(days=lag)
+        vals.append(y.get(ref, np.nan))
+    return np.asarray(vals)
 
 
 def evaluate(grid_path: Path, sales_csv: Path, horizon: int) -> pd.DataFrame:
@@ -43,8 +51,8 @@ def evaluate(grid_path: Path, sales_csv: Path, horizon: int) -> pd.DataFrame:
     for cutoff, g in wide.groupby("cutoff"):
         dates = pd.DatetimeIndex(g["ds"])
         actual = g["actual"].to_numpy()
-        snl = seasonal_values(y, dates, 364)
-        snl728 = seasonal_values(y, dates, 728)
+        snl = seasonal_values(y, dates, 364, cutoff)
+        snl728 = seasonal_values(y, dates, 728, cutoff)
         tfm = g["timesfm_2_5"].to_numpy() if "timesfm_2_5" in g else np.full(len(g), np.nan)
 
         candidates = {"seasonal_naive_lag_364": snl}
@@ -100,13 +108,25 @@ def summarize(fold_metrics: pd.DataFrame, benchmark: str = "seasonal_naive_lag_3
     return pd.DataFrame(rows).sort_values("mean_wape").reset_index(drop=True)
 
 
+def discover_grids() -> list[tuple[int, Path]]:
+    import json
+
+    grids = []
+    for manifest_path in sorted(Path(".").glob("outputs_multifold_*_validation/manifest.json")):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        grid_path = manifest_path.parent / "multifold_grid_predictions.csv"
+        if grid_path.exists():
+            grids.append((int(manifest["horizon"]), grid_path))
+    return sorted(grids)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sales-csv", default="daily_sales_data.csv")
     parser.add_argument("--recent-n", type=int, default=6, help="Also summarize over only the most recent N windows.")
     args = parser.parse_args()
 
-    for horizon, grid_path in [(28, Path("outputs_multifold_28d_validation/multifold_grid_predictions.csv")), (91, Path("outputs_multifold_91d_validation/multifold_grid_predictions.csv"))]:
+    for horizon, grid_path in discover_grids():
         fold_metrics = evaluate(grid_path, Path(args.sales_csv), horizon)
         print(f"\n=== Horizon {horizon}: all {fold_metrics['cutoff'].nunique()} grid windows ===")
         print(summarize(fold_metrics).to_string(index=False))

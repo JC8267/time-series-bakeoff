@@ -10,8 +10,8 @@ This document describes which validated models and ensembles to use for differen
 |---|---:|---|---|
 | Short-term production forecast | 28 days | `seasonal_naive_lag_364` | Won 4 of 6 folds of the 2026-06-10 multi-fold validation (mean WAPE 0.0680 vs 0.0865 for Extra Trees, which failed badly on the December holiday window). `final_28d_extra_trees_opening_timesfm_pool` remains the opening-aware scenario model. |
 | Medium-term production forecast | 91 days | `seasonal_naive_lag_364` | Won all 5 folds of the 2026-06-10 nested multi-fold validation (mean WAPE 0.0757 vs 0.0918 for the honestly refit convex stack). The earlier single-holdout stack win was contaminated by weight-fitting overlap. `final_91d_convex_stack_opening_timesfm_pool` is now a sensitivity/diagnostic model. |
-| Long-horizon pure forecast benchmark | 180 days | `final_180d_convex_stack_stats_chronos_pool` plus `final_180d_seasonal_naive_benchmark` | The stack had lower WAPE in the focused rerun, but validation remains underpowered. Keep seasonal naive as the benchmark sensitivity. |
-| Long-horizon pure forecast benchmark | 365 days | `final_365d_convex_stack_stats_chronos_pool` plus `final_365d_seasonal_naive_benchmark` | The stack had lower WAPE in the focused rerun, but validation remains underpowered. Keep seasonal naive as the benchmark sensitivity. |
+| Long-horizon pure forecast benchmark | 180 days | `final_180d_seasonal_naive_benchmark` | Won all 5 folds of the 2026-06-10 multi-fold validation (mean WAPE 0.0638 vs 0.0879 for the nested stack). The stack's focused-run win was contaminated by a ~5-month weight-fitting overlap; the stack is now a sensitivity comparator. |
+| Long-horizon pure forecast benchmark | 365 days | `final_365d_seasonal_naive_benchmark` | Won the single leak-free nested fold (WAPE 0.0568 vs 0.0806) and the 17-window sweep. The stack's focused-run win was contaminated by a ~11-month weight-fitting overlap; the stack is now a sensitivity comparator. |
 | Long-horizon opening-sensitive forecast | 180 days | `final_180d_hist_gradient_boosting_opening_sensitive` | Opening-sensitive scenario model. It did not beat the seasonal/stack benchmarks on WAPE, so use it for counterfactual sensitivity, not pure accuracy claims. |
 | Long-horizon opening-sensitive forecast | 365 days | `final_365d_hist_gradient_boosting_opening_sensitive` | Opening-sensitive scenario model. It did not beat the seasonal/stack benchmarks on WAPE, so use it for counterfactual sensitivity, not pure accuracy claims. |
 
@@ -33,6 +33,8 @@ Latest rerun artifacts:
 | 180/365 phase 6 | `outputs_opening_phase6_long_stats_chronos_venv` |
 | 91-day multi-fold nested validation | `outputs_multifold_91d_validation` (run_id `20260610T042656Z`) |
 | 28-day multi-fold nested validation | `outputs_multifold_28d_validation` (run_id `20260610T044622Z`) |
+| 180-day multi-fold nested validation | `outputs_multifold_180d_validation` (run_id `20260610T112337Z`) |
+| 365-day multi-fold nested validation | `outputs_multifold_365d_validation` (run_id `20260610T113121Z`) |
 
 Artifact notes:
 
@@ -51,16 +53,18 @@ Latest key validation metrics:
 | 91 | `nested_convex_stack` | 0.0918 | 0.0022 | 5 nested rolling folds (2026-06-10) |
 | 91 | `phase5_convex_stack` | 0.0507 | -0.0116 | 1 final holdout (contaminated; see caveat) |
 | 91 | `phase5_ridge_stack` | 0.0522 | -0.0216 | 1 final holdout (contaminated; see caveat) |
-| 180 | `phase3_heldout_cutoffs_inverse_wape` | 0.0645 | 0.0049 | 3 rolling cutoffs |
-| 180 | `seasonal_naive_lag_364` | 0.0686 | -0.0086 | 3 rolling cutoffs |
-| 365 | `phase3_heldout_cutoffs_convex_stack` | 0.0563 | -0.0080 | 3 rolling cutoffs |
-| 365 | `seasonal_naive_lag_364` | 0.0591 | 0.0019 | 3 rolling cutoffs |
+| 180 | `seasonal_naive_lag_364` | 0.0638 | -0.0096 | 5 nested rolling folds (2026-06-10) |
+| 180 | `nested_convex_stack` | 0.0879 | -0.0210 | 5 nested rolling folds (2026-06-10) |
+| 180 | `phase3_heldout_cutoffs_inverse_wape` | 0.0645 | 0.0049 | 3 rolling cutoffs (contaminated; see caveat) |
+| 365 | `seasonal_naive_lag_364` | 0.0568 | 0.0001 | 1 nested fold (2026-06-10) |
+| 365 | `nested_convex_stack` | 0.0806 | -0.0415 | 1 nested fold (2026-06-10) |
+| 365 | `phase3_heldout_cutoffs_convex_stack` | 0.0563 | -0.0080 | 3 rolling cutoffs (contaminated; see caveat) |
 
 Fold-count caveat:
 
 - The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon. Phase 3 stacking trained on the earlier aligned cutoff and evaluated on 2 held-out cutoffs. Phase 5 is a single final holdout window.
-- The phase-5 stack metrics are contaminated at both horizons: phase 3 fit the 91-day weights at cutoff 2025-11-01 (fitting window through 2026-01-31, overlapping the phase-5 holdout by 31 days) and the 28-day weights at cutoff 2026-02-23 (fitting window through 2026-03-23, overlapping the 28-day holdout by 19 days). Standalone models like `sklearn_extra_trees` have no weight fitting and are unaffected.
-- The 2026-06-10 multi-fold nested validations (`run_multifold_final_validation.py`, weights refit per fold leak-free) supersede the single holdouts: `seasonal_naive_lag_364` won all 5 folds at 91 days and 4 of 6 folds at 28 days. The 91-day folds overlap (28-day steps, 91-day windows), so they are not fully independent; the 28-day folds do not overlap.
+- The phase-3/phase-5 stack metrics are contaminated at every horizon: the weight-fitting windows overlap the evaluation windows by 19 days at 28d (fit cutoff 2026-02-23), 31 days at 91d (fit cutoff 2025-11-01), ~5 months at 180d (fit cutoff 2025-08-01), and ~11 months at 365d (fit cutoff 2025-02-01). Standalone models like `sklearn_extra_trees` have no weight fitting and are unaffected.
+- The 2026-06-10 multi-fold nested validations (`run_multifold_final_validation.py`, weights refit per fold leak-free) supersede those numbers: `seasonal_naive_lag_364` won 4 of 6 folds at 28 days, all 5 folds at 91 and 180 days, and the single feasible fold at 365 days. The 91/180-day folds overlap (28-day steps), so they are not fully independent; the 28-day folds do not overlap; the 365-day result rests on 1 nested fold plus a 17-window parameter-free sweep.
 - The latest 180/365 validation used 3 rolling cutoffs per horizon. This is intentionally underpowered.
 - Tests with fewer folds can flip the apparent winner back to `seasonal_naive_lag_364`. Do not compare a naive-only, fewer-fold run against an ensemble run unless the ensemble is rebuilt and scored on the same folds.
 - When fold count is reduced, report the result as a sensitivity check rather than a replacement recommendation unless phase 3/phase 5 are rerun under the same fold design.
@@ -86,8 +90,8 @@ Default choices:
 |---:|---|
 | 1-28 days | `seasonal_naive_lag_364`; keep `final_28d_extra_trees_opening_timesfm_pool` as the opening-aware sensitivity comparison, and avoid Extra Trees unhedged on windows spanning major holidays |
 | 29-91 days | `seasonal_naive_lag_364`; keep `final_91d_convex_stack_opening_timesfm_pool` as a sensitivity comparison only |
-| 92-180 days | Re-run opening-aware validation and compare `seasonal_naive_lag_364` against opening-sensitive ML models. Current benchmark winner is `seasonal_naive_lag_364`. |
-| 181-365 days | Use the focused phase-3 stack as the accuracy candidate and `seasonal_naive_lag_364` as the benchmark sensitivity; use opening-sensitive models when future openings materially affect the forecast. |
+| 92-180 days | `seasonal_naive_lag_364` (won all 5 multi-fold folds); opening-sensitive models for scenario sensitivity when openings matter |
+| 181-365 days | `seasonal_naive_lag_364` (won the leak-free fold and the 17-window sweep); opening-sensitive models when future openings materially affect the forecast |
 
 Implementation:
 
@@ -473,5 +477,6 @@ Suggested table:
 4. Done: add a new-unit ramp-curve estimator, pending unit-level input data.
 5. Done: add model cards for each production candidate, including intended use, validation horizon, and counterfactual suitability.
 6. Done (2026-06-10): multi-fold nested final validation at 91 days (`run_multifold_final_validation.py`); seasonal naive won all 5 folds and is now the 91-day production recommendation.
-7. In progress (2026-06-10): `explore_naive_beaters.py` swept parameter-free candidates over all grid windows from both multifold runs. A fixed 0.75 seasonal-naive / 0.25 TimesFM blend beat plain seasonal naive in 25/29 windows at 28 days and 24/27 at 91 days (recent-6 windows: 5/6 and 6/6; recent mean WAPE 0.0627 vs 0.0680 and 0.0663 vs 0.0713), with worst single-window loss +0.008 WAPE. The pattern holds at 62/38 and 50/50, so it is not ratio-mined. Pre-registered pick: **75/25**. Track it against seasonal naive on future windows; promote to production after it holds out-of-exploration. Growth-adjusted seasonal naive (trailing 56-day YoY ratio) is the best non-foundation fallback: strongest mean over the full grid but slightly behind the blends in the recent flat regime.
+7. In progress (2026-06-10): `explore_naive_beaters.py` swept parameter-free candidates over all grid windows from the four multifold runs. A fixed 0.75 seasonal-naive / 0.25 TimesFM blend beat plain seasonal naive in 25/29 windows at 28 days, 24/27 at 91 days, 19/23 at 180 days, and 16/17 at 365 days (recent-6 windows: 5/6, 6/6, 3/6, 5/6), with worst single-window losses of +0.008/+0.000/+0.004/+0.001 WAPE respectively. The pattern holds at 62/38 and 50/50, so it is not ratio-mined. Pre-registered pick: **75/25**. Track it against seasonal naive on future windows; promote to production after it holds out-of-exploration. Notes: at 180 days the recent edge is roughly neutral, and growth-adjusted seasonal naive (the best non-foundation fallback at short horizons) degrades badly at 365 days because a trailing YoY ratio does not persist a year out.
 8. Done (2026-06-10): multi-fold nested validation at 28 days (6 non-overlapping folds, run_id `20260610T044622Z`); seasonal naive won 4 of 6 folds and is now the 28-day production recommendation, with Extra Trees retained as the opening-aware scenario model.
+9. Done (2026-06-10): multi-fold nested validation at 180 days (5 folds, run_id `20260610T112337Z`) and 365 days (1 feasible fold, run_id `20260610T113121Z`); seasonal naive won everywhere and the long-horizon stacks were demoted to sensitivity comparators. Their earlier focused-run wins traced to weight-fitting windows overlapping the eval windows by ~5 and ~11 months.
