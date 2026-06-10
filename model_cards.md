@@ -4,7 +4,7 @@ Last updated: 2026-06-10
 
 Validation fold note: every WAPE/bias claim below should be read with its fold count. The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon, phase 3 trained stack weights on the earlier aligned cutoff and evaluated on 2 held-out cutoffs, and phase 5 used 1 final holdout. The latest 180/365 validation used 3 rolling cutoffs per horizon. Fewer-fold sensitivity tests can make `seasonal_naive_lag_364` win; treat those as sensitivity checks unless the ensemble candidates are rebuilt and scored on the same folds.
 
-2026-06-10 update: multi-fold nested final validations settled the rankings at every horizon (`run_multifold_final_validation.py`; 91 days: 5 folds, run_id `20260610T042656Z`; 28 days: 6 non-overlapping folds, run_id `20260610T044622Z`; 180 days: 5 folds, run_id `20260610T112337Z`; 365 days: 1 fold plus a 17-window parameter-free sweep, run_id `20260610T113121Z`; outputs in the matching `outputs_multifold_*_validation/` directories). The production recommendation at all four horizons is now `seasonal_naive_lag_364`. The learned convex stacks lost every leak-free fold at every horizon; their earlier wins traced to phase-3 weight-fitting windows overlapping the evaluation windows (31 days at 91d, 19 days at 28d, ~5 months at 180d, ~11 months at 365d). A fixed 0.75 seasonal-naive / 0.25 TimesFM blend is pre-registered as the tracked challenger (see `model_usage_plan.md`). `run_production_forecast.py` packages the production rows (`final_<h>d_seasonal_naive_production`) and challenger rows with leak-free residual-quantile intervals. See the per-card verdicts below.
+2026-06-10 update: multi-fold nested final validations settled the rankings at every horizon (`run_multifold_final_validation.py`; 91 days: 5 folds, run_id `20260610T124857Z`; 28 days: 6 non-overlapping folds, run_id `20260610T124426Z`; 180 days: 5 folds, run_id `20260610T112337Z`; 365 days: 1 fold plus a 17-window parameter-free sweep, run_id `20260610T113121Z`; outputs in the matching `outputs_multifold_*_validation/` directories). The 28/91-day runs were rerun after `opening_info.csv` grew from 4 to 10 openings (initial run_ids `20260610T044622Z`/`20260610T042656Z`, archived); the richer opening features did not change any verdict and slightly worsened the opening-aware ML models, consistent with the aggregate event study (`estimate_opening_lift_event_study.py`) finding per-unit opening lift unidentifiable from total-sales data. The production recommendation at all four horizons is now `seasonal_naive_lag_364`. The learned convex stacks lost every leak-free fold at every horizon; their earlier wins traced to phase-3 weight-fitting windows overlapping the evaluation windows (31 days at 91d, 19 days at 28d, ~5 months at 180d, ~11 months at 365d). A fixed 0.75 seasonal-naive / 0.25 TimesFM blend is pre-registered as the tracked challenger (see `model_usage_plan.md`). `run_production_forecast.py` packages the production rows (`final_<h>d_seasonal_naive_production`) and challenger rows with leak-free residual-quantile intervals. See the per-card verdicts below.
 
 ## `final_28d_extra_trees_opening_timesfm_pool`
 
@@ -29,13 +29,13 @@ Notes:
 - Uses an opening-aware feature set through the ML forecast pipeline.
 - The Statsmodels-fixed rerun did not change this recommendation.
 
-**2026-06-10 multi-fold verdict: prefer `seasonal_naive_lag_364` at 28 days. Extra Trees won only 2 of 6 folds.**
+**2026-06-10 multi-fold verdict: prefer `seasonal_naive_lag_364` at 28 days. Extra Trees won only 1 of 6 folds.**
 
-Provenance: `run_multifold_final_validation.py --horizon 28`, run_id `20260610T044622Z`, `outputs_multifold_28d_validation/` (6 non-overlapping 28-day holdout folds, cutoffs 2025-10-15 to 2026-03-04).
+Provenance: `run_multifold_final_validation.py --horizon 28`, run_id `20260610T124426Z`, `outputs_multifold_28d_validation/` (6 non-overlapping 28-day holdout folds, cutoffs 2025-10-15 to 2026-03-04; rerun with the 10-opening `opening_info.csv`).
 
-- `seasonal_naive_lag_364`: mean WAPE 0.0680. `sklearn_extra_trees`: mean WAPE 0.0865, winning 2 of 6 folds (mean diff +0.018).
-- The phase-5 single-holdout win below is clean for standalone Extra Trees (no weight fitting) and reproduces exactly on the matching fold (0.0314 vs naive 0.0386) — but it is 1 of 6 folds and not representative.
-- Extra Trees is volatile: competitive on most folds but failed badly on the December 2025 window (WAPE 0.182 vs naive 0.125), underforecasting through the holiday season. Do not use it unhedged for windows that span major holidays.
+- `seasonal_naive_lag_364`: mean WAPE 0.0680. `sklearn_extra_trees`: mean WAPE 0.0892, winning 1 of 6 folds (mean diff +0.021). With the earlier 4-opening file it scored 0.0865 and won 2 of 6 — richer opening features made it slightly worse, consistent with the event-study finding that aggregate data carries no identifiable opening signal.
+- The phase-5 single-holdout win below is clean for standalone Extra Trees (no weight fitting) and lands on its best fold (0.0333 vs naive 0.0386) — but it is 1 of 6 folds and not representative.
+- Extra Trees is volatile: competitive on most folds but failed badly on the December 2025 window (WAPE 0.177 vs naive 0.125), underforecasting through the holiday season. Do not use it unhedged for windows that span major holidays.
 - Production read: use `seasonal_naive_lag_364` as the 28-day production forecast. Keep Extra Trees as the opening-aware scenario/counterfactual model, reported beside the seasonal benchmark.
 
 Latest validation:
@@ -71,9 +71,9 @@ Notes:
 
 **2026-06-10 multi-fold verdict: prefer `seasonal_naive_lag_364` at 91 days. The stack strategy lost all 5 nested validation folds.**
 
-Provenance: `run_multifold_final_validation.py`, run_id `20260610T042656Z`, `outputs_multifold_91d_validation/` (5 rolling 91-day holdout folds, cutoffs 2025-09-10 to 2025-12-31 stepped 28 days; folds overlap, so they are not fully independent; stack weights refit per fold on only the backtest windows ending at or before that fold's cutoff).
+Provenance: `run_multifold_final_validation.py`, run_id `20260610T124857Z`, `outputs_multifold_91d_validation/` (5 rolling 91-day holdout folds, cutoffs 2025-09-10 to 2025-12-31 stepped 28 days; folds overlap, so they are not fully independent; stack weights refit per fold on only the backtest windows ending at or before that fold's cutoff; rerun with the 10-opening file and `sklearn_extra_trees` added to the pool, where it finished near last at 0.1057 mean WAPE).
 
-- Nested convex stack (the honest version of the production strategy): mean WAPE 0.0918, **0/5 wins** vs `seasonal_naive_lag_364` (mean WAPE 0.0757), losing every fold by +0.014 to +0.022.
+- Nested convex stack (the honest version of the production strategy): mean WAPE 0.0903, **0/5 wins** vs `seasonal_naive_lag_364` (mean WAPE 0.0757), losing every fold.
 - Root cause is weight instability, not blending per se. On the 2024 to mid-2025 fitting windows TimesFM dominated (inner WAPE ~0.08 vs ~0.13-0.15 for seasonal naive), so every nested fit put ~90% weight on TimesFM; on the late-2025 holdout windows the regime flipped and seasonal naive won everywhere. The strategy chases stale relative performance.
 - The earlier phase-5 single-holdout "win" (0.0507 vs 0.0550) is contaminated: phase 3 fit the production weights at cutoff 2025-11-01, whose 91-day fitting window (through 2026-01-31) overlaps the phase-5 holdout (2026-01-01 to 2026-04-01) by 31 days.
 - The frozen shipped weights (0.62 seasonal naive / 0.38 TimesFM) do beat seasonal naive on all 5 folds by small margins (0.0013-0.0091 WAPE), but those weights postdate 4 of the 5 folds and were fit on data overlapping the 5th, so this is suggestive, not validated. If a blend is wanted, pre-register a fixed ratio and validate it on future folds before shipping it as the winner.

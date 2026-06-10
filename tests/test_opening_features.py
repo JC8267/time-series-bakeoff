@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-from run_bakeoff import add_opening_features
+from run_bakeoff import add_opening_features, load_openings
+
+
+def test_load_openings_with_name_and_bu_yields_single_unit_id_column(tmp_path) -> None:
+    path = tmp_path / "openings.csv"
+    path.write_text("Name,BU,Opening_date\nSyracuse,1129,11/19/2025\nPharr,1100,10/1/2025\n", encoding="utf-8")
+
+    openings = load_openings(path)
+
+    assert list(openings.columns).count("unit_id") == 1
+    assert openings["unit_id"].tolist() == [1100, 1129]
 
 
 def test_add_opening_features_ramp_windows() -> None:

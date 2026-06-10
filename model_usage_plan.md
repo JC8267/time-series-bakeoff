@@ -31,8 +31,9 @@ Latest rerun artifacts:
 | 180/365 phase 3 | `outputs_opening_phase3_long_stats_chronos_venv` |
 | 180/365 phase 4 | `outputs_opening_phase4_long_stats_chronos_venv` |
 | 180/365 phase 6 | `outputs_opening_phase6_long_stats_chronos_venv` |
-| 91-day multi-fold nested validation | `outputs_multifold_91d_validation` (run_id `20260610T042656Z`) |
-| 28-day multi-fold nested validation | `outputs_multifold_28d_validation` (run_id `20260610T044622Z`) |
+| 91-day multi-fold nested validation | `outputs_multifold_91d_validation` (run_id `20260610T124857Z`; 4-opening original archived) |
+| 28-day multi-fold nested validation | `outputs_multifold_28d_validation` (run_id `20260610T124426Z`; 4-opening original archived) |
+| Opening lift event study | `outputs_opening_event_study` (`estimate_opening_lift_event_study.py`) |
 | 180-day multi-fold nested validation | `outputs_multifold_180d_validation` (run_id `20260610T112337Z`) |
 | 365-day multi-fold nested validation | `outputs_multifold_365d_validation` (run_id `20260610T113121Z`) |
 
@@ -46,11 +47,11 @@ Latest key validation metrics:
 | Horizon | Candidate | WAPE | Bias | Validation folds |
 |---:|---|---:|---:|---:|
 | 28 | `seasonal_naive_lag_364` | 0.0680 | 0.0025 | 6 non-overlapping folds (2026-06-10) |
-| 28 | `sklearn_extra_trees` | 0.0865 | -0.0313 | 6 non-overlapping folds (2026-06-10) |
+| 28 | `sklearn_extra_trees` | 0.0892 | -0.0292 | 6 non-overlapping folds (2026-06-10, 10-opening rerun) |
 | 28 | `sklearn_extra_trees` | 0.0314 | 0.0020 | 1 final holdout (clean but unrepresentative; matches the best of the 6 folds) |
 | 28 | `phase5_ridge_stack` | 0.0327 | -0.0164 | 1 final holdout (contaminated; see caveat) |
 | 91 | `seasonal_naive_lag_364` | 0.0757 | -0.0024 | 5 nested rolling folds (2026-06-10) |
-| 91 | `nested_convex_stack` | 0.0918 | 0.0022 | 5 nested rolling folds (2026-06-10) |
+| 91 | `nested_convex_stack` | 0.0903 | -0.0011 | 5 nested rolling folds (2026-06-10, 10-opening rerun) |
 | 91 | `phase5_convex_stack` | 0.0507 | -0.0116 | 1 final holdout (contaminated; see caveat) |
 | 91 | `phase5_ridge_stack` | 0.0522 | -0.0216 | 1 final holdout (contaminated; see caveat) |
 | 180 | `seasonal_naive_lag_364` | 0.0638 | -0.0096 | 5 nested rolling folds (2026-06-10) |
@@ -236,6 +237,8 @@ Recommended benchmarks:
 | C | Total sales | Yes | Best production setup for total-sales forecasting. |
 
 Version C should be the default production candidate for total sales. Version A should be the primary demand-model benchmark when unit-level data supports it.
+
+Aggregate identifiability warning (2026-06-10): `estimate_opening_lift_event_study.py` estimated per-opening lift from total sales for all 10 known openings using a pre-opening-YoY-adjusted comparison. Estimates ranged from -15.6% to +6.4% of chain sales with no consistent sign or ramp shape — an order of magnitude larger than any plausible single-unit contribution — because chain-level macro swings dominate. Per-unit opening effects are NOT identifiable from aggregate data. Consequences: (a) do not apply event-study uplifts to production forecasts; (b) treat ML opening-feature effects as directional at best; (c) unit-level daily sales remain the single highest-leverage data improvement for opening analytics.
 
 ### 5. Promotion or campaign incrementality
 
@@ -473,3 +476,4 @@ Suggested table:
 7. In progress (2026-06-10): `explore_naive_beaters.py` swept parameter-free candidates over all grid windows from the four multifold runs. A fixed 0.75 seasonal-naive / 0.25 TimesFM blend beat plain seasonal naive in 25/29 windows at 28 days, 24/27 at 91 days, 19/23 at 180 days, and 16/17 at 365 days (recent-6 windows: 5/6, 6/6, 3/6, 5/6), with worst single-window losses of +0.008/+0.000/+0.004/+0.001 WAPE respectively. The pattern holds at 62/38 and 50/50, so it is not ratio-mined. Pre-registered pick: **75/25**. Track it against seasonal naive on future windows; promote to production after it holds out-of-exploration. Notes: at 180 days the recent edge is roughly neutral, and growth-adjusted seasonal naive (the best non-foundation fallback at short horizons) degrades badly at 365 days because a trailing YoY ratio does not persist a year out.
 8. Done (2026-06-10): multi-fold nested validation at 28 days (6 non-overlapping folds, run_id `20260610T044622Z`); seasonal naive won 4 of 6 folds and is now the 28-day production recommendation, with Extra Trees retained as the opening-aware scenario model.
 9. Done (2026-06-10): multi-fold nested validation at 180 days (5 folds, run_id `20260610T112337Z`) and 365 days (1 feasible fold, run_id `20260610T113121Z`); seasonal naive won everywhere and the long-horizon stacks were demoted to sensitivity comparators. Their earlier focused-run wins traced to weight-fitting windows overlapping the eval windows by ~5 and ~11 months.
+10. Done (2026-06-10): `opening_info.csv` grew from 4 to 10 openings (2 with fully observed ramps, 3 planned after the current data end). The 28/91-day multifold runs were rerun with the new file (run_ids `20260610T124426Z`/`20260610T124857Z`): no verdict changed, and richer opening features slightly worsened the opening-aware ML models. The aggregate event study found per-unit lift unidentifiable (see the warning in section 4). The production forecast manifest now lists planned openings inside each forecast window as an explicit unquantified caveat.

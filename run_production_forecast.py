@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from experiment_registry import append_experiment
-from run_bakeoff import load_sales, seasonal_naive, set_seeds
+from run_bakeoff import load_openings, load_sales, seasonal_naive, set_seeds
 
 
 BLEND_NAIVE_WEIGHT = 0.75
@@ -94,6 +94,7 @@ def main() -> None:
     parser.add_argument("--horizons", default="28,91,180,365")
     parser.add_argument("--interval-windows", type=int, default=8, help="Most recent multifold grid cutoffs used for residual quantiles.")
     parser.add_argument("--timesfm-context", type=int, default=1024)
+    parser.add_argument("--opening-info", default="opening_info.csv", help="Used only to flag planned openings inside forecast windows; no uplift is applied.")
     parser.add_argument("--output-dir", default="outputs_production_forecast")
     args = parser.parse_args()
 
@@ -131,6 +132,18 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     out.to_csv(output_dir / "production_forecast.csv", index=False)
 
+    # Planned openings inside a forecast window are volume the seasonal-naive
+    # rule structurally cannot anticipate. The aggregate event study found
+    # per-unit lift unidentifiable, so no uplift is applied; the manifest
+    # flags them as an explicit unquantified caveat instead.
+    planned_openings: dict[str, list[str]] = {}
+    openings = load_openings(Path(args.opening_info)) if args.opening_info else None
+    if openings is not None:
+        future = openings[openings["open_date"] > training_cutoff]
+        for horizon in horizons:
+            in_window = future[future["open_date"] <= training_cutoff + pd.Timedelta(days=horizon)]
+            planned_openings[str(horizon)] = [f"{u} ({d.date()})" for u, d in zip(in_window["unit_id"], in_window["open_date"])]
+
     manifest = {
         "run_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -140,6 +153,7 @@ def main() -> None:
         "blend_naive_weight": BLEND_NAIVE_WEIGHT,
         "interval_windows": args.interval_windows,
         "interval_sources": interval_meta,
+        "planned_openings_not_in_forecast": planned_openings,
         "basis": "2026-06-10 multi-fold verdicts; see model_cards.md and model_usage_plan.md",
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -147,6 +161,11 @@ def main() -> None:
 
     summary = out.groupby("model_name").agg(rows=("ds", "size"), start=("ds", "min"), end=("ds", "max"), forecast_sum=("forecast", "sum")).reset_index()
     print(summary.to_string(index=False))
+    flagged = {h: units for h, units in planned_openings.items() if units}
+    if flagged:
+        print("\nCAVEAT: planned openings inside forecast windows are NOT in these forecasts (no identifiable uplift):")
+        for horizon, units in flagged.items():
+            print(f"  {horizon}d: {', '.join(units)}")
 
 
 if __name__ == "__main__":

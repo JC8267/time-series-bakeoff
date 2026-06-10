@@ -153,14 +153,15 @@ def load_openings(path: Path | None) -> pd.DataFrame | None:
     if path is None or not path.exists():
         return None
     raw = pd.read_csv(path)
-    rename = {
-        "Name": "unit_id",
-        "BU": "unit_id",
-        "Opening_date": "open_date",
-        "opening_date": "open_date",
-        "Open_date": "open_date",
-    }
-    openings = raw.rename(columns={k: v for k, v in rename.items() if k in raw.columns}).copy()
+    date_renames = {"Opening_date": "open_date", "opening_date": "open_date", "Open_date": "open_date"}
+    openings = raw.rename(columns={k: v for k, v in date_renames.items() if k in raw.columns}).copy()
+    # Use exactly one unit-id source; renaming both Name and BU would create
+    # duplicate unit_id columns and break downstream column selection.
+    if "unit_id" not in openings.columns:
+        for candidate in ["BU", "Name"]:
+            if candidate in openings.columns:
+                openings = openings.rename(columns={candidate: "unit_id"})
+                break
     if "open_date" not in openings.columns:
         raise ValueError(f"{path} must contain an opening date column.")
     if "unit_id" not in openings.columns:
