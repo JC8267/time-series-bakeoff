@@ -1,0 +1,26 @@
+{
+  "180": [
+    "seasonal_naive_lag_364",
+    "sklearn_hist_gradient_boosting",
+    "statsforecast_auto_arima",
+    "statsforecast_auto_ets",
+    "statsforecast_mstl_auto_arima",
+    "statsforecast_mstl_auto_ets",
+    "timesfm_2_5",
+    "chronos_bolt_small",
+    "phase3_heldout_cutoffs_inverse_wape",
+    "phase3_heldout_cutoffs_convex_stack"
+  ],
+  "365": [
+    "seasonal_naive_lag_364",
+    "sklearn_hist_gradient_boosting",
+    "statsforecast_auto_arima",
+    "statsforecast_auto_ets",
+    "statsforecast_mstl_auto_arima",
+    "statsforecast_mstl_auto_ets",
+    "timesfm_2_5",
+    "chronos_bolt_small",
+    "phase3_heldout_cutoffs_convex_stack",
+    "phase3_heldout_cutoffs_ridge_stack"
+  ]
+}

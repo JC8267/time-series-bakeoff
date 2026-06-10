@@ -1,0 +1,34 @@
+{
+  "180": [
+    {
+      "kind": "base",
+      "source": "seasonal_naive_lag_364",
+      "name": "final_180d_seasonal_naive_benchmark"
+    },
+    {
+      "kind": "convex_stack",
+      "name": "final_180d_convex_stack_stats_chronos_pool"
+    },
+    {
+      "kind": "base",
+      "source": "sklearn_hist_gradient_boosting",
+      "name": "final_180d_hist_gradient_boosting_opening_sensitive"
+    }
+  ],
+  "365": [
+    {
+      "kind": "base",
+      "source": "seasonal_naive_lag_364",
+      "name": "final_365d_seasonal_naive_benchmark"
+    },
+    {
+      "kind": "convex_stack",
+      "name": "final_365d_convex_stack_stats_chronos_pool"
+    },
+    {
+      "kind": "base",
+      "source": "sklearn_hist_gradient_boosting",
+      "name": "final_365d_hist_gradient_boosting_opening_sensitive"
+    }
+  ]
+}

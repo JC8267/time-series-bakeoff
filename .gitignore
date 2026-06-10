@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+catboost_info/
+experiments.csv
+
+# Environments
+.venv/
+
+# Business data — keep local only, never push
+daily_sales_data.csv
+opening_info.csv
+
+# Generated run outputs and work dirs (contain absolute sales figures)
+outputs*/
+outputs_opening_summary.md
+outputs_opening_timesfm_ensemble_summary.md
+RUN_INDEX.md
+archive/
+bn_work/
+cas_request/
+new_opening_incremental/
+new_units_incremental*/
+*.log
+
+# Model artifacts
+autogluon_models/
