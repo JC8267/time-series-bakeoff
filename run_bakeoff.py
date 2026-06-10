@@ -558,24 +558,28 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
 
 
 def add_conformal_intervals(preds: pd.DataFrame) -> pd.DataFrame:
+    # Residuals come from the EARLIEST third of cutoffs and intervals are emitted
+    # only for cutoffs after that calibration window, so reported coverage is
+    # never scored on the rows that produced the residuals (and never uses
+    # residuals from folds later than the row being scored). Calibration-cutoff
+    # rows keep point forecasts only.
     out = preds.copy()
     out[["p10", "p50", "p90", "p025", "p975"]] = np.nan
+    out["p50"] = out["forecast"]
     for (_, model_name), group in out.groupby(["horizon", "model_name"]):
         cutoffs = sorted(group["cutoff"].unique())
         if len(cutoffs) < 3:
-            idx = group.index
-            out.loc[idx, "p50"] = out.loc[idx, "forecast"]
             continue
-        calibration_cutoffs = cutoffs[-max(2, len(cutoffs) // 3):]
+        calibration_cutoffs = cutoffs[: max(2, len(cutoffs) // 3)]
         residuals = group.loc[group["cutoff"].isin(calibration_cutoffs)].copy()
         residuals["residual"] = residuals["actual"] - residuals["forecast"]
-        for h_step, step_group in group.groupby("horizon_step"):
+        target = group.loc[~group["cutoff"].isin(calibration_cutoffs)]
+        for h_step, step_group in target.groupby("horizon_step"):
             step_resid = residuals.loc[residuals["horizon_step"] == h_step, "residual"]
             if len(step_resid) < 2:
                 step_resid = residuals["residual"]
             qs = np.quantile(step_resid, [0.025, 0.10, 0.90, 0.975])
             idx = step_group.index
-            out.loc[idx, "p50"] = out.loc[idx, "forecast"]
             out.loc[idx, "p025"] = out.loc[idx, "forecast"] + qs[0]
             out.loc[idx, "p10"] = out.loc[idx, "forecast"] + qs[1]
             out.loc[idx, "p90"] = out.loc[idx, "forecast"] + qs[2]
@@ -662,6 +666,9 @@ def run_backtests(df: pd.DataFrame, horizons: tuple[int, ...], max_cutoffs: int 
 def write_metrics(preds: pd.DataFrame, output_dir: Path) -> dict[str, pd.DataFrame]:
     by_cutoff = preds.groupby(["horizon", "cutoff", "model_name"], dropna=False).apply(score_group, include_groups=False).reset_index()
     by_horizon = preds.groupby(["horizon", "model_name"], dropna=False).apply(score_group, include_groups=False).reset_index()
+    # ensemble_* candidates were selected by WAPE on these same folds, so their
+    # metrics are optimistically biased; flag them so the leaderboard is honest.
+    by_horizon["is_diagnostic_ensemble"] = by_horizon["model_name"].str.startswith("ensemble")
     by_month = preds.assign(month=preds["ds"].dt.to_period("M").astype(str)).groupby(["horizon", "month", "model_name"], dropna=False).apply(score_group, include_groups=False).reset_index()
     by_horizon.to_csv(output_dir / "model_metrics_by_horizon.csv", index=False)
     by_cutoff.to_csv(output_dir / "model_metrics_by_cutoff.csv", index=False)
@@ -698,7 +705,8 @@ def plot_outputs(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.DataFrame, o
         plt.close()
 
     primary_horizon = 91 if 91 in set(preds["horizon"]) else int(preds["horizon"].max())
-    best_model = metrics.loc[metrics["horizon"].eq(primary_horizon)].sort_values("wape").iloc[0]["model_name"]
+    eligible = metrics.loc[metrics["horizon"].eq(primary_horizon) & ~metrics["model_name"].str.startswith("ensemble")]
+    best_model = eligible.sort_values("wape").iloc[0]["model_name"]
     model_preds = preds[(preds["horizon"] == primary_horizon) & (preds["model_name"] == best_model)].copy()
     latest_cutoff = model_preds["cutoff"].max()
     latest = model_preds[model_preds["cutoff"] == latest_cutoff]
@@ -727,23 +735,15 @@ def plot_outputs(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.DataFrame, o
 
 def write_future_forecast(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.DataFrame, output_dir: Path) -> None:
     horizon = 91 if 91 in set(preds["horizon"]) else int(preds["horizon"].max())
-    best_model = metrics[metrics["horizon"] == horizon].sort_values("wape").iloc[0]["model_name"]
+    # ensemble_* rows are excluded: their candidates were selected on these same
+    # folds (leaky ranking), and their varying aggregations (median, weighted)
+    # were previously misreproduced here as a plain mean.
+    eligible = metrics[(metrics["horizon"] == horizon) & ~metrics["model_name"].str.startswith("ensemble")]
+    best_model = eligible.sort_values("wape").iloc[0]["model_name"]
     base_models = {spec.name: spec for spec in model_specs(horizon, OPENINGS_DF)}
     future_dates = pd.Series(pd.date_range(df["ds"].max() + pd.Timedelta(days=1), periods=horizon, freq="D"))
-
-    if best_model in base_models:
-        forecast = base_models[best_model].predict(df, future_dates)
-        model_name = best_model
-    else:
-        candidates = json.loads(preds.loc[preds["model_name"].eq(best_model), "hyperparams_json"].dropna().iloc[0]).get("candidates", [])
-        if not candidates:
-            candidates = list(metrics[metrics["horizon"] == horizon].sort_values("wape").head(5)["model_name"])
-        forecasts = []
-        for candidate in candidates:
-            if candidate in base_models:
-                forecasts.append(base_models[candidate].predict(df, future_dates))
-        forecast = np.mean(forecasts, axis=0)
-        model_name = best_model
+    forecast = base_models[best_model].predict(df, future_dates)
+    model_name = best_model
 
     residual_source = preds[(preds["horizon"] == horizon) & (preds["model_name"] == model_name)].copy()
     residual_source["residual"] = residual_source["actual"] - residual_source["forecast"]
@@ -840,7 +840,8 @@ def main() -> None:
     manifest["degraded_models"] = DEGRADED_MODELS
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    best = metrics["by_horizon"].sort_values(["horizon", "wape"]).groupby("horizon").head(1)
+    honest = metrics["by_horizon"][~metrics["by_horizon"]["model_name"].str.startswith("ensemble")]
+    best = honest.sort_values(["horizon", "wape"]).groupby("horizon").head(1)
     print(best[["horizon", "model_name", "wape", "bias_pct", "mae", "rmse"]].to_string(index=False))
 
     if DEGRADED_MODELS:

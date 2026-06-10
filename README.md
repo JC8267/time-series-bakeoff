@@ -4,10 +4,22 @@ Daily sales forecasting bakeoff with opening-aware features, TimesFM/Prophet ben
 
 ## Start Here
 
+Build the current production forecast package (seasonal naive production rows plus the pre-registered 75/25 naive/TimesFM challenger, all four horizons, leak-free residual-quantile intervals):
+
+```powershell
+python run_production_forecast.py --sales-csv daily_sales_data.csv --output-dir outputs_production_forecast
+```
+
 Run the opening-aware 28/91 validation:
 
 ```powershell
 python run_bakeoff.py --sales-csv daily_sales_data.csv --opening-info opening_info.csv --horizons 28,91 --output-dir outputs_opening_phase1
+```
+
+Re-run the leak-free multi-fold validation for a horizon (required before packaging a new horizon):
+
+```powershell
+python run_multifold_final_validation.py --horizon 91 --n-folds 5 --output-dir outputs_multifold_91d_validation
 ```
 
 Build the current production package:

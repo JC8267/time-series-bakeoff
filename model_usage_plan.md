@@ -93,31 +93,24 @@ Default choices:
 | 92-180 days | `seasonal_naive_lag_364` (won all 5 multi-fold folds); opening-sensitive models for scenario sensitivity when openings matter |
 | 181-365 days | `seasonal_naive_lag_364` (won the leak-free fold and the 17-window sweep); opening-sensitive models when future openings materially affect the forecast |
 
-Implementation:
+Implementation (primary, all horizons):
 
 ```powershell
-python run_phase6.py `
+python run_production_forecast.py `
   --sales-csv daily_sales_data.csv `
-  --opening-info opening_info.csv `
-  --phase3-metadata outputs_opening_phase3_statsmodels_timesfm25_venv/phase3_metadata.json `
-  --phase4-predictions outputs_opening_phase4_statsmodels_timesfm25_recalibrated_venv/phase4_calibrated_predictions.csv `
-  --output-dir outputs_opening_phase6_statsmodels_timesfm25_recalibrated_venv
+  --output-dir outputs_production_forecast
 ```
 
-Primary output:
+Primary output: `outputs_production_forecast/production_forecast.csv` with rows:
 
 ```text
-outputs_opening_phase6_statsmodels_timesfm25_recalibrated_venv/phase6_final_forecast.csv
+final_<h>d_seasonal_naive_production       (production forecast)
+challenger_<h>d_blend_snl75_tfm25          (pre-registered challenger, tracked not shipped)
 ```
 
-Use the winner-aligned rows:
+Intervals are residual quantiles from each rule's own recent multifold grid windows; the manifest records the grid and window count per horizon. Requires the matching `outputs_multifold_<h>d_validation/` grid (run `run_multifold_final_validation.py` first for a new horizon or after a data refresh).
 
-```text
-final_28d_extra_trees_opening_timesfm_pool
-final_91d_convex_stack_opening_timesfm_pool
-```
-
-Note: after the 2026-06-10 multi-fold validations, prefer `seasonal_naive_lag_364` for both the 28-day and 91-day production numbers and treat the packaged winner-aligned rows as sensitivity comparisons. Seasonal naive needs no phase-6 packaging; it is reproducible directly from the sales history (year-ago values).
+The phase-6 package (`run_phase6.py`, see Implementation Commands below) remains available for the legacy stack/ML artifacts; after the 2026-06-10 multi-fold validations its winner-aligned rows are sensitivity comparisons, not production.
 
 ### 2. Like-for-like demand forecasting
 
