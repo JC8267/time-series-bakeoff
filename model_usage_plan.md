@@ -79,6 +79,22 @@ Model additions in the latest rerun:
 - TimesFM loader fallback for the current `huggingface-hub` behavior that forwards `proxies` into the TimesFM constructor.
 - Direct dependency pins for `huggingface-hub==0.35.3` and `httpx==0.27.2` to keep TimesFM and Chronos loading in the project venv.
 
+## Market-Level (Trade-Area) Forecasting
+
+Added 2026-06-10 from the bu-level bakeoff (`run_market_bakeoff.py`, run_id `20260610T132950Z`, `outputs_market_bakeoff/`, 97 markets, 5 folds at 28 and 91 days). Targets the bu-level panel on its own terms (~88% of `daily_sales_data.csv` scope — see `DATA.md`; do not mix the two targets).
+
+| Task | Use | Why |
+|---|---|---|
+| Individual trade-area forecasts | `market_timesfm` (TimesFM 2.5 per market, batched) | Median per-market WAPE 0.163-0.164 vs 0.180-0.193 for per-market seasonal naive; beats naive in 77-78% of markets at both horizons. |
+| bu-total or like-for-like aggregate | Direct seasonal naive on the aggregate series | Bottom-up summing adds nothing (0.0608 vs 0.0609 at 28d); per-market model wins do not survive aggregation (TimesFM 0.077, pooled LightGBM 0.086 at the total level). |
+| Young/new markets (< 1 year) | `pooled_lightgbm` or `market_timesfm` | Pooled model transfers sqm/format/days-since-open structure across markets; seasonal naive has no year-ago base. |
+
+Notes:
+
+- Per-market growth-adjusted naive collapses at 91 days (mean total WAPE 0.149, +8% bias): noisy per-market YoY ratios — often inflated by openings in the trailing year — extrapolate badly. Do not use it below the chain level.
+- Like-for-like (markets with a physical unit open >= 365 days) behaves like the total: direct seasonal naive on the mature-market aggregate is the benchmark.
+- Opening lift for scenario work comes from `estimate_market_opening_lift.py` (within-market ecomm-baseline counterfactual), not from these forecast models.
+
 ## Decision Rules
 
 ### 1. General sales forecasting
