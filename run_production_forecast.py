@@ -34,6 +34,11 @@ QUANTILE_COLS = ["p025", "p10", "p50", "p90", "p975"]
 QUANTILE_LEVELS = [0.025, 0.10, 0.90, 0.975]
 
 
+def seasonal_segment(ds: pd.Series) -> pd.Series:
+    dates = pd.to_datetime(ds)
+    return np.where(dates.dt.month.isin([11, 12]), "holiday_weeks", "rest_weeks")
+
+
 def discover_grids() -> dict[int, Path]:
     grids = {}
     for manifest_path in sorted(Path(".").glob("outputs_multifold_*_validation/manifest.json")):
@@ -60,41 +65,90 @@ def residual_quantiles(grid_path: Path, interval_windows: int) -> dict[str, np.n
         pairs.append(("blend", blend_from_wide(recent)))
     out = {}
     for name, forecast in pairs:
-        residuals = recent["actual"].to_numpy() - forecast
-        out[name] = np.quantile(residuals, QUANTILE_LEVELS)
+        temp = recent[["ds", "actual"]].copy()
+        temp["forecast"] = forecast
+        temp["segment"] = seasonal_segment(temp["ds"])
+        temp["residual"] = temp["actual"] - temp["forecast"]
+        model_quantiles = {"global": np.quantile(temp["residual"].to_numpy(), QUANTILE_LEVELS)}
+        for segment, group in temp.groupby("segment"):
+            model_quantiles[segment] = np.quantile(group["residual"].to_numpy(), QUANTILE_LEVELS)
+        out[name] = model_quantiles
     out["n_windows"] = len(recent_cutoffs)
     return out
 
 
-def build_horizon_rows(naive: np.ndarray, tfm: np.ndarray | None, horizon: int, dates: pd.Series, qs: dict, training_cutoff: pd.Timestamp) -> list[dict]:
+def build_horizon_rows(
+    naive: np.ndarray,
+    tfm: np.ndarray | None,
+    horizon: int,
+    dates: pd.Series,
+    qs: dict,
+    training_cutoff: pd.Timestamp,
+    interval_mode: str = "global",
+) -> list[dict]:
     """Production rows always; challenger rows only when a TimesFM forecast exists.
 
     The seasonal-naive production package must never depend on TimesFM being
     loadable -- pass tfm=None to skip the challenger.
     """
     interval_note = f"own_residual_quantiles_recent_{qs['n_windows']}_grid_windows"
-    rows = forecast_rows(f"final_{horizon}d_seasonal_naive_production", dates, naive, qs["seasonal_naive"], training_cutoff, interval_note)
+    rows = forecast_rows(
+        f"final_{horizon}d_seasonal_naive_production",
+        dates,
+        naive,
+        qs["seasonal_naive"],
+        training_cutoff,
+        interval_note,
+        interval_mode,
+    )
     if tfm is not None and "blend" in qs:
         blend = BLEND_NAIVE_WEIGHT * naive + (1 - BLEND_NAIVE_WEIGHT) * tfm
-        rows.extend(forecast_rows(f"challenger_{horizon}d_blend_snl75_tfm25", dates, blend, qs["blend"], training_cutoff, interval_note))
+        rows.extend(
+            forecast_rows(
+                f"challenger_{horizon}d_blend_snl75_tfm25",
+                dates,
+                blend,
+                qs["blend"],
+                training_cutoff,
+                interval_note,
+                interval_mode,
+            )
+        )
     return rows
 
 
-def forecast_rows(model_name: str, dates: pd.Series, forecast: np.ndarray, qs: np.ndarray, training_cutoff: pd.Timestamp, interval_note: str) -> list[dict]:
+def forecast_rows(
+    model_name: str,
+    dates: pd.Series,
+    forecast: np.ndarray,
+    qs: np.ndarray,
+    training_cutoff: pd.Timestamp,
+    interval_note: str,
+    interval_mode: str = "global",
+) -> list[dict]:
     rows = []
-    for ds, pred in zip(dates, forecast):
+    segments = seasonal_segment(dates)
+    for ds, pred, segment in zip(dates, forecast, segments):
+        q_values = qs
+        note = interval_note
+        if isinstance(qs, dict):
+            q_values = qs.get(segment, qs["global"]) if interval_mode == "segment" else qs["global"]
+            note = f"{interval_note}_{interval_mode}"
+            if interval_mode == "segment":
+                note = f"{note}_{segment}"
         rows.append(
             {
                 "unique_id": "total_sales",
                 "ds": ds,
                 "model_name": model_name,
                 "forecast": max(0.0, float(pred)),
-                "p025": max(0.0, float(pred + qs[0])),
-                "p10": max(0.0, float(pred + qs[1])),
+                "p025": max(0.0, float(pred + q_values[0])),
+                "p10": max(0.0, float(pred + q_values[1])),
                 "p50": max(0.0, float(pred)),
-                "p90": max(0.0, float(pred + qs[2])),
-                "p975": max(0.0, float(pred + qs[3])),
-                "interval_method": interval_note,
+                "p90": max(0.0, float(pred + q_values[2])),
+                "p975": max(0.0, float(pred + q_values[3])),
+                "interval_method": note,
+                "seasonal_segment": segment,
                 "training_cutoff": training_cutoff,
             }
         )
@@ -106,6 +160,7 @@ def main() -> None:
     parser.add_argument("--sales-csv", default="daily_sales_data.csv")
     parser.add_argument("--horizons", default="28,91,180,365")
     parser.add_argument("--interval-windows", type=int, default=8, help="Most recent multifold grid cutoffs used for residual quantiles.")
+    parser.add_argument("--interval-mode", choices=["global", "segment"], default="global")
     parser.add_argument("--timesfm-context", type=int, default=1024)
     parser.add_argument("--opening-info", default="opening_info.csv", help="Used only to flag planned openings inside forecast windows; no uplift is applied.")
     parser.add_argument("--output-dir", default="outputs_production_forecast")
@@ -149,7 +204,7 @@ def main() -> None:
             except Exception as exc:
                 challenger_skipped_reason = f"TimesFM forecast failed at horizon {horizon}: {type(exc).__name__}: {exc}"
                 print(f"WARNING [production]: {challenger_skipped_reason}.", flush=True)
-        rows.extend(build_horizon_rows(naive, tfm, horizon, dates, qs, training_cutoff))
+        rows.extend(build_horizon_rows(naive, tfm, horizon, dates, qs, training_cutoff, args.interval_mode))
 
     out = pd.DataFrame(rows)
     output_dir = Path(args.output_dir)
@@ -176,6 +231,7 @@ def main() -> None:
         "models": sorted(out["model_name"].unique().tolist()),
         "blend_naive_weight": BLEND_NAIVE_WEIGHT,
         "interval_windows": args.interval_windows,
+        "interval_mode": args.interval_mode,
         "interval_sources": interval_meta,
         "challenger_included": challenger_skipped_reason is None,
         "challenger_skipped_reason": challenger_skipped_reason,

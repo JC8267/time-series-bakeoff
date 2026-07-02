@@ -5,6 +5,8 @@ import pandas as pd
 
 from metrics import score_group
 from run_bakeoff import add_conformal_intervals
+from run_forecast_significance_tests import hac_standard_error, moving_block_bootstrap
+from run_interval_coverage_backtest import add_rolling_intervals
 
 
 def build_preds(n_cutoffs: int, horizon: int = 3) -> pd.DataFrame:
@@ -73,3 +75,34 @@ def test_coverage_ignores_rows_without_intervals() -> None:
 
     assert scores["coverage_80"] == 1.0
     assert scores["coverage_95"] == 1.0
+
+
+def test_hac_standard_error_handles_positive_autocorrelation() -> None:
+    values = np.asarray([-0.02, -0.01, 0.0, 0.01, 0.02])
+
+    se, long_run_var = hac_standard_error(values, max_lag=2)
+
+    assert se >= 0.0
+    assert long_run_var >= 0.0
+
+
+def test_moving_block_bootstrap_preserves_sample_size() -> None:
+    values = np.asarray([1.0, 2.0, 3.0, 4.0])
+
+    means = moving_block_bootstrap(values, block_length=2, n_bootstrap=25, seed=7)
+
+    assert len(means) == 25
+    assert means.min() >= values.min()
+    assert means.max() <= values.max()
+
+
+def test_rolling_segment_intervals_use_prior_cutoffs_only() -> None:
+    preds = build_preds(n_cutoffs=5, horizon=2)
+    preds["model_name"] = "model_a"
+    preds.loc[preds["cutoff"] < pd.Timestamp("2025-01-01") + pd.Timedelta(days=28 * 2), "actual"] = preds["forecast"] + 10.0
+    preds.loc[preds["cutoff"] >= pd.Timestamp("2025-01-01") + pd.Timedelta(days=28 * 2), "actual"] = preds["forecast"] + 50.0
+
+    out = add_rolling_intervals(preds, interval_windows=2, min_calibration_windows=2, mode="global")
+
+    first_eval = out[out["cutoff"].eq(sorted(preds["cutoff"].unique())[2])]
+    np.testing.assert_allclose(first_eval["p90"] - first_eval["forecast"], 10.0)
