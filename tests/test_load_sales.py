@@ -36,3 +36,18 @@ def test_load_sales_can_error_on_missing_dates(tmp_path) -> None:
     with pytest.raises(ValueError, match="Missing sales dates"):
         load_sales(sales_path, fill_missing="error")
 
+
+def test_load_sales_weekly_grain_aggregates_complete_weeks(tmp_path) -> None:
+    sales_path = tmp_path / "sales.csv"
+    pd.DataFrame(
+        {
+            "transaction_date": pd.date_range("2024-01-01", "2024-01-17", freq="D"),
+            "sales": [1.0] * 17,
+        }
+    ).to_csv(sales_path, index=False)
+
+    out = load_sales(sales_path, grain="weekly", weekly_freq="W-WED")
+
+    assert out["ds"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-10", "2024-01-17"]
+    assert out["y"].tolist() == [7.0, 7.0]
+    assert out["data_gap_filled_flag"].tolist() == [0, 0]

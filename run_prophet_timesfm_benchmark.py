@@ -60,6 +60,16 @@ def load_chronos_bolt(model_id: str = "amazon/chronos-bolt-small"):
         return ChronosBoltPipeline.from_pretrained(model_id)
 
 
+def load_chronos2(model_id: str = "amazon/chronos-2"):
+    import torch
+    from chronos import Chronos2Pipeline
+
+    try:
+        return Chronos2Pipeline.from_pretrained(model_id, device_map="cpu", torch_dtype=torch.float32)
+    except TypeError:
+        return Chronos2Pipeline.from_pretrained(model_id)
+
+
 def forecast_timesfm(model, train: pd.DataFrame, horizon: int, max_context: int) -> pd.DataFrame:
     y = train["y"].astype(float).to_numpy()
     ctx = y[-min(len(y), max_context) :]
@@ -78,6 +88,34 @@ def forecast_timesfm(model, train: pd.DataFrame, horizon: int, max_context: int)
     else:
         out[["p025", "p10", "p50", "p90", "p975"]] = np.nan
         out["p50"] = forecast
+    return out
+
+
+def forecast_chronos2(model, train: pd.DataFrame, horizon: int, max_context: int) -> pd.DataFrame:
+    context = train[["ds", "y"]].rename(columns={"ds": "timestamp", "y": "target"}).copy()
+    context["item_id"] = "sales"
+    pred = model.predict_df(
+        context[["item_id", "timestamp", "target"]],
+        prediction_length=horizon,
+        quantile_levels=[0.025, 0.1, 0.5, 0.9, 0.975],
+        id_column="item_id",
+        timestamp_column="timestamp",
+        target="target",
+        context_length=min(max_context, len(context)),
+        cross_learning=False,
+    ).sort_values("timestamp")
+    out = pd.DataFrame(
+        {
+            "forecast": pred["0.5"].to_numpy(),
+            "p025": pred["0.025"].to_numpy(),
+            "p10": pred["0.1"].to_numpy(),
+            "p50": pred["0.5"].to_numpy(),
+            "p90": pred["0.9"].to_numpy(),
+            "p975": pred["0.975"].to_numpy(),
+        }
+    )
+    for col in ["forecast", "p025", "p10", "p50", "p90", "p975"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce").clip(lower=0)
     return out
 
 
@@ -180,6 +218,11 @@ def run(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
     except Exception as exc:
         print(f"Skipping Chronos-Bolt: {exc}")
         chronos = None
+    try:
+        chronos2 = load_chronos2(args.chronos2_model_id) if "chronos2" in requested_models else None
+    except Exception as exc:
+        print(f"Skipping Chronos-2: {exc}")
+        chronos2 = None
     all_rows = []
 
     for horizon in horizons:
@@ -200,6 +243,13 @@ def run(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
             chronos_fcst = forecast_chronos_bolt(chronos, train, horizon, args.chronos_max_context)
             chronos_runtime = time.perf_counter() - started
 
+        chronos2_fcst = None
+        chronos2_runtime = 0.0
+        if chronos2 is not None:
+            started = time.perf_counter()
+            chronos2_fcst = forecast_chronos2(chronos2, train, horizon, args.chronos2_max_context)
+            chronos2_runtime = time.perf_counter() - started
+
         started = time.perf_counter()
         prophet_fcst = forecast_prophet(train, horizon)
         prophet_runtime = time.perf_counter() - started
@@ -213,11 +263,19 @@ def run(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
         if chronos_fcst is not None:
             models["chronos_bolt_small"] = (chronos_fcst, chronos_runtime)
             models["prophet_chronos_bolt_mean"] = (weighted_ensemble(prophet_fcst, chronos_fcst, (0.5, 0.5)), 0.0)
+        if chronos2_fcst is not None:
+            models["chronos2"] = (chronos2_fcst, chronos2_runtime)
+            models["prophet_chronos2_mean"] = (weighted_ensemble(prophet_fcst, chronos2_fcst, (0.5, 0.5)), 0.0)
         if timesfm_fcst is not None and chronos_fcst is not None:
             foundation = prophet_fcst.copy()
             for col in ["forecast", "p025", "p10", "p50", "p90", "p975"]:
                 foundation[col] = np.nanmean(np.vstack([timesfm_fcst[col], chronos_fcst[col]]), axis=0)
             models["timesfm_chronos_bolt_mean"] = (foundation, 0.0)
+        if timesfm_fcst is not None and chronos2_fcst is not None:
+            foundation = prophet_fcst.copy()
+            for col in ["forecast", "p025", "p10", "p50", "p90", "p975"]:
+                foundation[col] = np.nanmean(np.vstack([timesfm_fcst[col], chronos2_fcst[col]]), axis=0)
+            models["timesfm_chronos2_mean"] = (foundation, 0.0)
         for name, (fcst, runtime) in models.items():
             all_rows.append(build_rows(test, name, fcst, cutoff, horizon, runtime))
 
@@ -265,6 +323,8 @@ def main() -> None:
     parser.add_argument("--tfm-max-context", type=int, default=1024)
     parser.add_argument("--chronos-max-context", type=int, default=2048)
     parser.add_argument("--chronos-model-id", default="amazon/chronos-bolt-small")
+    parser.add_argument("--chronos2-max-context", type=int, default=8192)
+    parser.add_argument("--chronos2-model-id", default="amazon/chronos-2")
     parser.add_argument("--models", default="timesfm_2_5,chronos_bolt_small,prophet")
     parser.add_argument("--output-dir", default="outputs_prophet_timesfm")
     args = parser.parse_args()

@@ -61,6 +61,10 @@ DATE_COL = "transaction_date"
 SALES_COL = "sales"
 PRIMARY_HORIZONS = (28, 91)
 MIN_TRAIN_DAYS = 730
+MIN_TRAIN_WEEKS = 104
+DAILY_GRAIN = "daily"
+WEEKLY_GRAIN = "weekly"
+DEFAULT_WEEKLY_FREQ = "W-WED"
 OPENINGS_DF: pd.DataFrame | None = None
 
 # Records every model that silently degraded to a baseline, with the reason.
@@ -99,6 +103,35 @@ def set_seeds() -> None:
     np.random.seed(SEED)
 
 
+def normalize_grain(grain: str) -> str:
+    grain = grain.lower().strip()
+    if grain in {"daily", "day", "d"}:
+        return DAILY_GRAIN
+    if grain in {"weekly", "week", "w"}:
+        return WEEKLY_GRAIN
+    raise ValueError(f"Unsupported grain: {grain}")
+
+
+def freq_for_grain(grain: str, weekly_freq: str = DEFAULT_WEEKLY_FREQ) -> str:
+    return "D" if normalize_grain(grain) == DAILY_GRAIN else weekly_freq
+
+
+def horizon_delta(horizon: int, grain: str) -> pd.Timedelta:
+    return pd.Timedelta(days=horizon) if normalize_grain(grain) == DAILY_GRAIN else pd.Timedelta(weeks=horizon)
+
+
+def annual_lag_for_grain(grain: str) -> int:
+    return 364 if normalize_grain(grain) == DAILY_GRAIN else 52
+
+
+def short_lag_for_grain(grain: str) -> int:
+    return 7 if normalize_grain(grain) == DAILY_GRAIN else 1
+
+
+def short_window_for_grain(grain: str) -> int:
+    return 28 if normalize_grain(grain) == DAILY_GRAIN else 4
+
+
 def arcsinh(x: np.ndarray | pd.Series) -> np.ndarray:
     return np.arcsinh(np.asarray(x, dtype=float))
 
@@ -107,7 +140,14 @@ def inv_arcsinh(x: np.ndarray | pd.Series) -> np.ndarray:
     return np.sinh(np.asarray(x, dtype=float))
 
 
-def load_sales(path: Path, fill_missing: str = "interpolate", audit_path: Path | None = None) -> pd.DataFrame:
+def load_sales(
+    path: Path,
+    fill_missing: str = "interpolate",
+    audit_path: Path | None = None,
+    grain: str = DAILY_GRAIN,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> pd.DataFrame:
+    grain = normalize_grain(grain)
     raw = pd.read_csv(path)
     if DATE_COL not in raw.columns or SALES_COL not in raw.columns:
         raise ValueError(f"{path} must contain {DATE_COL!r} and {SALES_COL!r}.")
@@ -142,10 +182,25 @@ def load_sales(path: Path, fill_missing: str = "interpolate", audit_path: Path |
     df["data_gap_filled_flag"] = missing_mask.astype(int)
     if df[SALES_COL].isna().any():
         raise ValueError("sales still contains missing values after fill strategy.")
-    df.index.name = "ds"
-    df = df.reset_index().rename(columns={SALES_COL: "y"})
+    if grain == WEEKLY_GRAIN:
+        weekly = (
+            df.resample(weekly_freq)
+            .agg(
+                y=(SALES_COL, "sum"),
+                data_gap_filled_flag=("data_gap_filled_flag", "sum"),
+                days_in_period=(SALES_COL, "size"),
+            )
+            .reset_index(names="ds")
+        )
+        weekly = weekly[weekly["days_in_period"] == 7].drop(columns=["days_in_period"]).reset_index(drop=True)
+        df = weekly
+    else:
+        df.index.name = "ds"
+        df = df.reset_index().rename(columns={SALES_COL: "y"})
     df["unique_id"] = "total_sales"
     df.attrs["missing_days_filled"] = missing_days
+    df.attrs["grain"] = grain
+    df.attrs["freq"] = freq_for_grain(grain, weekly_freq)
     return df[["unique_id", "ds", "y", "data_gap_filled_flag"]]
 
 
@@ -246,7 +301,19 @@ def add_calendar_features(frame: pd.DataFrame, openings: pd.DataFrame | None = N
     return add_opening_features(out, openings)
 
 
-def build_cutoffs(df: pd.DataFrame, horizon: int, max_cutoffs: int | None) -> list[pd.Timestamp]:
+def build_cutoffs(df: pd.DataFrame, horizon: int, max_cutoffs: int | None, grain: str = DAILY_GRAIN) -> list[pd.Timestamp]:
+    grain = normalize_grain(grain)
+    if grain == WEEKLY_GRAIN:
+        first_idx = MIN_TRAIN_WEEKS - 1
+        last_idx = len(df) - horizon - 1
+        if first_idx > last_idx:
+            raise ValueError(f"Not enough history for weekly horizon={horizon}.")
+        step = 1 if horizon <= 4 else 4
+        cutoffs = [pd.Timestamp(c).normalize() for c in df["ds"].iloc[first_idx : last_idx + 1 : step]]
+        if max_cutoffs:
+            cutoffs = cutoffs[-max_cutoffs:]
+        return cutoffs
+
     start = df["ds"].min() + pd.Timedelta(days=MIN_TRAIN_DAYS)
     end = df["ds"].max() - pd.Timedelta(days=horizon)
     if start > end:
@@ -260,7 +327,13 @@ def build_cutoffs(df: pd.DataFrame, horizon: int, max_cutoffs: int | None) -> li
     return [pd.Timestamp(c).normalize() for c in cutoffs]
 
 
-def make_lag_features(history: pd.DataFrame, future_dates: pd.Series, recursive_values: list[float], openings: pd.DataFrame | None = None) -> pd.DataFrame:
+def make_lag_features(
+    history: pd.DataFrame,
+    future_dates: pd.Series,
+    recursive_values: list[float],
+    openings: pd.DataFrame | None = None,
+    grain: str = DAILY_GRAIN,
+) -> pd.DataFrame:
     combined = pd.concat(
         [
             history[["ds", "y"]],
@@ -269,14 +342,23 @@ def make_lag_features(history: pd.DataFrame, future_dates: pd.Series, recursive_
         ignore_index=True,
     )
     combined = add_calendar_features(combined, openings)
-    lags = [1, 2, 3, 7, 14, 21, 28, 56, 91, 182, 364]
+    if normalize_grain(grain) == WEEKLY_GRAIN:
+        lags = [1, 2, 3, 4, 8, 13, 26, 52]
+        mean_windows = [4, 8, 13, 26, 52]
+        std_windows = [4, 8, 13]
+        minmax_windows = [4, 13]
+    else:
+        lags = [1, 2, 3, 7, 14, 21, 28, 56, 91, 182, 364]
+        mean_windows = [7, 14, 28, 56, 91]
+        std_windows = [7, 14, 28]
+        minmax_windows = [7, 28]
     for lag in lags:
         combined[f"lag_{lag}"] = combined["y"].shift(lag)
-    for window in [7, 14, 28, 56, 91]:
+    for window in mean_windows:
         combined[f"roll_mean_{window}"] = combined["y"].shift(1).rolling(window).mean()
-    for window in [7, 14, 28]:
+    for window in std_windows:
         combined[f"roll_std_{window}"] = combined["y"].shift(1).rolling(window).std()
-    for window in [7, 28]:
+    for window in minmax_windows:
         combined[f"roll_min_{window}"] = combined["y"].shift(1).rolling(window).min()
         combined[f"roll_max_{window}"] = combined["y"].shift(1).rolling(window).max()
     combined["expanding_mean"] = combined["y"].shift(1).expanding().mean()
@@ -294,8 +376,14 @@ def target_date_features(dates: pd.Series, openings: pd.DataFrame | None = None)
     return features.drop(columns=["ds", "y"], errors="ignore").add_prefix("target_")
 
 
-def predict_sklearn_recursive(model_factory: Callable[[], object], train: pd.DataFrame, dates: pd.Series, openings: pd.DataFrame | None = None) -> np.ndarray:
-    train_features = make_lag_features(train, pd.Series([], dtype="datetime64[ns]"), [], openings)
+def predict_sklearn_recursive(
+    model_factory: Callable[[], object],
+    train: pd.DataFrame,
+    dates: pd.Series,
+    openings: pd.DataFrame | None = None,
+    grain: str = DAILY_GRAIN,
+) -> np.ndarray:
+    train_features = make_lag_features(train, pd.Series([], dtype="datetime64[ns]"), [], openings, grain)
     train_features["target"] = arcsinh(train_features["y"])
     train_features = train_features.dropna()
     cols = feature_columns(train_features.drop(columns=["target"]))
@@ -305,7 +393,7 @@ def predict_sklearn_recursive(model_factory: Callable[[], object], train: pd.Dat
     preds: list[float] = []
     dates = dates.reset_index(drop=True)
     for step_idx, ds in enumerate(dates):
-        frame = make_lag_features(train, dates.iloc[: step_idx + 1], preds + [np.nan], openings)
+        frame = make_lag_features(train, dates.iloc[: step_idx + 1], preds + [np.nan], openings, grain)
         row = frame.iloc[[-1]][cols]
         if row.isna().any().any():
             missing_cols = row.columns[row.isna().any()].tolist()
@@ -315,14 +403,21 @@ def predict_sklearn_recursive(model_factory: Callable[[], object], train: pd.Dat
     return np.asarray(preds)
 
 
-def predict_sklearn_direct(model_factory: Callable[[], object], train: pd.DataFrame, dates: pd.Series, openings: pd.DataFrame | None = None) -> np.ndarray:
-    base = make_lag_features(train, pd.Series([], dtype="datetime64[ns]"), [], openings)
+def predict_sklearn_direct(
+    model_factory: Callable[[], object],
+    train: pd.DataFrame,
+    dates: pd.Series,
+    openings: pd.DataFrame | None = None,
+    grain: str = DAILY_GRAIN,
+) -> np.ndarray:
+    grain = normalize_grain(grain)
+    base = make_lag_features(train, pd.Series([], dtype="datetime64[ns]"), [], openings, grain)
     base_cols = feature_columns(base)
     dates = dates.reset_index(drop=True)
     preds: list[float] = []
     for step, target_ds in enumerate(dates, start=1):
         train_step = base.copy()
-        target_features = target_date_features(train_step["ds"] + pd.Timedelta(days=step), openings)
+        target_features = target_date_features(train_step["ds"] + horizon_delta(step, grain), openings)
         train_step = pd.concat([train_step.reset_index(drop=True), target_features.reset_index(drop=True)], axis=1)
         train_step["target"] = arcsinh(train_step["y"].shift(-step))
         train_step = train_step.dropna()
@@ -345,13 +440,154 @@ def predict_sklearn_direct(model_factory: Callable[[], object], train: pd.DataFr
 
 
 def seasonal_naive(train: pd.DataFrame, horizon: int, lag: int) -> np.ndarray:
+    values = seasonal_values(train, horizon, lag)
+    if values is None:
+        return np.repeat(train["y"].to_numpy()[-1], horizon)
+    return values
+
+
+def seasonal_values(train: pd.DataFrame, horizon: int, lag: int) -> np.ndarray | None:
     y = train["y"].to_numpy()
     if len(y) < lag:
-        return np.repeat(y[-1], horizon)
+        return None
     # Tile the last full season so horizons longer than the lag repeat the
     # seasonal cycle instead of flatlining at the final training value.
     idx = len(y) - lag + (np.arange(horizon) % lag)
     return y[idx]
+
+
+def level_scale_ratio(train: pd.DataFrame, lag: int, window: int, damping: float = 1.0) -> float:
+    y = train["y"].to_numpy(dtype=float)
+    if window <= 0 or len(y) < lag + window:
+        return 1.0
+    current = y[-window:].sum()
+    prior = y[-lag - window : -lag].sum()
+    if abs(prior) <= 1e-9:
+        return 1.0
+    ratio = current / prior
+    if not np.isfinite(ratio):
+        return 1.0
+    return max(0.0, 1.0 + (ratio - 1.0) * damping)
+
+
+def level_scaled_seasonal_naive(train: pd.DataFrame, horizon: int, lag: int, window: int, damping: float = 1.0) -> np.ndarray:
+    return seasonal_naive(train, horizon, lag) * level_scale_ratio(train, lag, window, damping)
+
+
+def seasonal_average(train: pd.DataFrame, horizon: int, base_lag: int, years: int = 2) -> np.ndarray:
+    forecasts = []
+    weights = []
+    for year in range(1, years + 1):
+        values = seasonal_values(train, horizon, base_lag * year)
+        if values is None:
+            continue
+        forecasts.append(values.astype(float))
+        weights.append(float(years - year + 1))
+    if not forecasts:
+        return seasonal_naive(train, horizon, base_lag)
+    weights_arr = np.asarray(weights, dtype=float)
+    weights_arr = weights_arr / weights_arr.sum()
+    return np.average(np.vstack(forecasts), axis=0, weights=weights_arr)
+
+
+def daily_forecast_horizon_days(daily_train: pd.DataFrame, weekly_dates: pd.Series) -> int:
+    dates = pd.to_datetime(weekly_dates).dt.normalize()
+    cutoff = pd.Timestamp(daily_train["ds"].max()).normalize()
+    end = pd.Timestamp(dates.max()).normalize()
+    horizon_days = int((end - cutoff).days)
+    if horizon_days <= 0:
+        raise ValueError("weekly_dates must be after the daily training cutoff.")
+    return horizon_days
+
+
+def reaggregate_daily_forecast(daily_train: pd.DataFrame, weekly_dates: pd.Series, daily_forecast: np.ndarray, weekly_freq: str = DEFAULT_WEEKLY_FREQ) -> np.ndarray:
+    dates = pd.to_datetime(weekly_dates).dt.normalize()
+    cutoff = pd.Timestamp(daily_train["ds"].max()).normalize()
+    future_dates = pd.date_range(cutoff + pd.Timedelta(days=1), periods=len(daily_forecast), freq="D")
+    daily_frame = pd.DataFrame(
+        {
+            "ds": future_dates,
+            "forecast": daily_forecast,
+        }
+    )
+    weekly = daily_frame.set_index("ds")["forecast"].resample(weekly_freq).sum()
+    missing = dates[~dates.isin(weekly.index)]
+    if len(missing):
+        first_missing = ", ".join(str(d.date()) for d in missing[:5])
+        raise ValueError(f"Daily reaggregation could not produce weekly forecasts for: {first_missing}")
+    return weekly.reindex(dates).to_numpy()
+
+
+def daily_reagg_seasonal_naive(daily_train: pd.DataFrame, weekly_dates: pd.Series, lag: int = 364, weekly_freq: str = DEFAULT_WEEKLY_FREQ) -> np.ndarray:
+    horizon_days = daily_forecast_horizon_days(daily_train, weekly_dates)
+    forecast = seasonal_naive(daily_train, horizon_days, lag)
+    return reaggregate_daily_forecast(daily_train, weekly_dates, forecast, weekly_freq)
+
+
+def daily_reagg_level_scaled_seasonal_naive(
+    daily_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    lag: int = 364,
+    window: int = 56,
+    damping: float = 1.0,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    horizon_days = daily_forecast_horizon_days(daily_train, weekly_dates)
+    forecast = level_scaled_seasonal_naive(daily_train, horizon_days, lag, window, damping)
+    return reaggregate_daily_forecast(daily_train, weekly_dates, forecast, weekly_freq)
+
+
+def daily_reagg_seasonal_average(
+    daily_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    base_lag: int = 364,
+    years: int = 2,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    horizon_days = daily_forecast_horizon_days(daily_train, weekly_dates)
+    forecast = seasonal_average(daily_train, horizon_days, base_lag, years)
+    return reaggregate_daily_forecast(daily_train, weekly_dates, forecast, weekly_freq)
+
+
+def daily_train_through_weekly_cutoff(daily_history: pd.DataFrame, weekly_train: pd.DataFrame) -> pd.DataFrame:
+    cutoff = pd.Timestamp(weekly_train["ds"].max()).normalize()
+    return daily_history[pd.to_datetime(daily_history["ds"]).dt.normalize() <= cutoff].copy()
+
+
+def daily_reagg_seasonal_naive_from_full_history(
+    daily_history: pd.DataFrame,
+    weekly_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    lag: int = 364,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    daily_train = daily_train_through_weekly_cutoff(daily_history, weekly_train)
+    return daily_reagg_seasonal_naive(daily_train, weekly_dates, lag, weekly_freq)
+
+
+def daily_reagg_level_scaled_seasonal_naive_from_full_history(
+    daily_history: pd.DataFrame,
+    weekly_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    lag: int = 364,
+    window: int = 56,
+    damping: float = 1.0,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    daily_train = daily_train_through_weekly_cutoff(daily_history, weekly_train)
+    return daily_reagg_level_scaled_seasonal_naive(daily_train, weekly_dates, lag, window, damping, weekly_freq)
+
+
+def daily_reagg_seasonal_average_from_full_history(
+    daily_history: pd.DataFrame,
+    weekly_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    base_lag: int = 364,
+    years: int = 2,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    daily_train = daily_train_through_weekly_cutoff(daily_history, weekly_train)
+    return daily_reagg_seasonal_average(daily_train, weekly_dates, base_lag, years, weekly_freq)
 
 
 def window_average(train: pd.DataFrame, horizon: int, window: int) -> np.ndarray:
@@ -368,37 +604,50 @@ def same_weekday_average(train: pd.DataFrame, dates: pd.Series, weeks: int = 8) 
     return np.asarray(preds)
 
 
-def ets_forecast(train: pd.DataFrame, horizon: int) -> np.ndarray:
+def ets_forecast(train: pd.DataFrame, horizon: int, grain: str = DAILY_GRAIN) -> np.ndarray:
+    grain = normalize_grain(grain)
+    seasonal_periods = 7 if grain == DAILY_GRAIN else 52
+    fallback_window = short_window_for_grain(grain)
     if ExponentialSmoothing is None:
-        warn_fallback("statsmodels_ets_weekly", "window_average_28", _STATSMODELS_IMPORT_ERROR or "statsmodels import unavailable")
-        return window_average(train, horizon, 28)
-    y = train.set_index("ds")["y"].asfreq("D")
+        warn_fallback("statsmodels_ets_weekly", f"window_average_{fallback_window}", _STATSMODELS_IMPORT_ERROR or "statsmodels import unavailable")
+        return window_average(train, horizon, fallback_window)
+    y = train.set_index("ds")["y"].asfreq(freq_for_grain(grain))
     try:
-        model = ExponentialSmoothing(y, trend="add", seasonal="add", seasonal_periods=7, initialization_method="estimated")
+        model = ExponentialSmoothing(y, trend="add", seasonal="add", seasonal_periods=seasonal_periods, initialization_method="estimated")
         return np.maximum(0.0, np.asarray(model.fit(optimized=True).forecast(horizon)))
     except Exception as exc:
-        warn_fallback("statsmodels_ets_weekly", "window_average_28", f"fit/predict error: {type(exc).__name__}: {exc}")
-        return window_average(train, horizon, 28)
+        warn_fallback("statsmodels_ets_weekly", f"window_average_{fallback_window}", f"fit/predict error: {type(exc).__name__}: {exc}")
+        return window_average(train, horizon, fallback_window)
 
 
-def sarimax_forecast(train: pd.DataFrame, horizon: int) -> np.ndarray:
+def sarimax_forecast(train: pd.DataFrame, horizon: int, grain: str = DAILY_GRAIN) -> np.ndarray:
+    grain = normalize_grain(grain)
+    seasonal_period = 7 if grain == DAILY_GRAIN else 52
+    fallback_lag = short_lag_for_grain(grain)
     if SARIMAX is None:
-        warn_fallback("statsmodels_sarimax_weekly", "seasonal_naive_lag_7", _STATSMODELS_IMPORT_ERROR or "statsmodels import unavailable")
-        return seasonal_naive(train, horizon, 7)
-    y = train.set_index("ds")["y"].asfreq("D")
+        warn_fallback("statsmodels_sarimax_weekly", f"seasonal_naive_lag_{fallback_lag}", _STATSMODELS_IMPORT_ERROR or "statsmodels import unavailable")
+        return seasonal_naive(train, horizon, fallback_lag)
+    y = train.set_index("ds")["y"].asfreq(freq_for_grain(grain))
     try:
-        model = SARIMAX(y, order=(1, 0, 1), seasonal_order=(1, 0, 1, 7), trend="c", enforce_stationarity=False, enforce_invertibility=False)
+        model = SARIMAX(y, order=(1, 0, 1), seasonal_order=(1, 0, 1, seasonal_period), trend="c", enforce_stationarity=False, enforce_invertibility=False)
         return np.maximum(0.0, np.asarray(model.fit(disp=False, maxiter=75).forecast(horizon)))
     except Exception as exc:
-        warn_fallback("statsmodels_sarimax_weekly", "seasonal_naive_lag_7", f"fit/predict error: {type(exc).__name__}: {exc}")
-        return seasonal_naive(train, horizon, 7)
+        warn_fallback("statsmodels_sarimax_weekly", f"seasonal_naive_lag_{fallback_lag}", f"fit/predict error: {type(exc).__name__}: {exc}")
+        return seasonal_naive(train, horizon, fallback_lag)
 
 
-def statsforecast_forecast(train: pd.DataFrame, horizon: int, model_name: str) -> np.ndarray:
+def statsforecast_forecast(train: pd.DataFrame, horizon: int, model_name: str, grain: str = DAILY_GRAIN) -> np.ndarray:
+    grain = normalize_grain(grain)
+    annual_lag = annual_lag_for_grain(grain)
     if StatsForecast is None:
-        warn_fallback(model_name, "seasonal_naive_lag_364", _STATSFORECAST_IMPORT_ERROR or "statsforecast import unavailable")
-        return seasonal_naive(train, horizon, 364)
-    season_lengths = [7, 365] if len(train) >= 730 else [7]
+        warn_fallback(model_name, f"seasonal_naive_lag_{annual_lag}", _STATSFORECAST_IMPORT_ERROR or "statsforecast import unavailable")
+        return seasonal_naive(train, horizon, annual_lag)
+    if grain == WEEKLY_GRAIN:
+        season_lengths = [52] if len(train) >= MIN_TRAIN_WEEKS else [1]
+        base_season_length = 52
+    else:
+        season_lengths = [7, 365] if len(train) >= 730 else [7]
+        base_season_length = 7
     try:
         # season_length controls the seasonality the forecaster itself models.
         # Standalone AutoARIMA/AutoETS use weekly (7). MSTL deseasonalizes first,
@@ -417,9 +666,9 @@ def statsforecast_forecast(train: pd.DataFrame, horizon: int, model_name: str) -
             alias=alias or "AutoARIMA",
         )
         if model_name == "statsforecast_auto_arima":
-            model = auto_arima(7, model_name)
+            model = auto_arima(base_season_length, model_name)
         elif model_name == "statsforecast_auto_ets":
-            model = AutoETS(season_length=7, alias=model_name)
+            model = AutoETS(season_length=base_season_length, alias=model_name)
         elif model_name == "statsforecast_mstl_auto_arima":
             model = MSTL(
                 season_length=season_lengths,
@@ -433,7 +682,7 @@ def statsforecast_forecast(train: pd.DataFrame, horizon: int, model_name: str) -
             raise ValueError(model_name)
 
         sf_train = train[["unique_id", "ds", "y"]].copy()
-        sf = StatsForecast(models=[model], freq="D", n_jobs=1)
+        sf = StatsForecast(models=[model], freq=freq_for_grain(grain), n_jobs=1)
         sf.fit(sf_train)
         fcst = sf.predict(h=horizon).reset_index()
         forecast = pd.to_numeric(fcst[model_name], errors="coerce").to_numpy()
@@ -441,8 +690,8 @@ def statsforecast_forecast(train: pd.DataFrame, horizon: int, model_name: str) -
             raise ValueError(f"StatsForecast produced invalid forecast for {model_name}.")
         return np.maximum(0.0, forecast)
     except Exception as exc:
-        warn_fallback(model_name, "seasonal_naive_lag_364", f"fit/predict error: {type(exc).__name__}: {exc}")
-        return seasonal_naive(train, horizon, 364)
+        warn_fallback(model_name, f"seasonal_naive_lag_{annual_lag}", f"fit/predict error: {type(exc).__name__}: {exc}")
+        return seasonal_naive(train, horizon, annual_lag)
 
 
 @dataclass(frozen=True)
@@ -452,20 +701,46 @@ class ModelSpec:
     predict: Callable[[pd.DataFrame, pd.Series], np.ndarray]
 
 
-def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[ModelSpec]:
+def model_specs(horizon: int, openings: pd.DataFrame | None = None, grain: str = DAILY_GRAIN) -> list[ModelSpec]:
+    grain = normalize_grain(grain)
     opening_features = openings if openings is not None else OPENINGS_DF
+    annual_lag = annual_lag_for_grain(grain)
+    short_lag = short_lag_for_grain(grain)
+    short_window = short_window_for_grain(grain)
+    scale_window_long = 8 if grain == WEEKLY_GRAIN else 56
+    medium_window = 12 if grain == WEEKLY_GRAIN else 7
+    long_window = 26 if grain == WEEKLY_GRAIN else 28
     specs = [
-        ModelSpec("seasonal_naive_lag_7", "every_cutoff", lambda train, dates: seasonal_naive(train, len(dates), 7)),
-        ModelSpec("seasonal_naive_lag_364", "every_cutoff", lambda train, dates: seasonal_naive(train, len(dates), 364)),
-        ModelSpec("window_average_7", "every_cutoff", lambda train, dates: window_average(train, len(dates), 7)),
-        ModelSpec("window_average_28", "every_cutoff", lambda train, dates: window_average(train, len(dates), 28)),
-        ModelSpec("same_weekday_average_8w", "every_cutoff", lambda train, dates: same_weekday_average(train, dates, 8)),
-        ModelSpec("statsmodels_ets_weekly", "every_cutoff", lambda train, dates: ets_forecast(train, len(dates))),
-        ModelSpec("statsmodels_sarimax_weekly", "every_cutoff", lambda train, dates: sarimax_forecast(train, len(dates))),
-        ModelSpec("statsforecast_auto_arima", "every_cutoff_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_auto_arima")),
-        ModelSpec("statsforecast_auto_ets", "every_cutoff_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_auto_ets")),
-        ModelSpec("statsforecast_mstl_auto_arima", "every_cutoff_mstl_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_mstl_auto_arima")),
-        ModelSpec("statsforecast_mstl_auto_ets", "every_cutoff_mstl_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_mstl_auto_ets")),
+        ModelSpec(f"seasonal_naive_lag_{short_lag}", "every_cutoff", lambda train, dates: seasonal_naive(train, len(dates), short_lag)),
+        ModelSpec(f"seasonal_naive_lag_{annual_lag}", "every_cutoff", lambda train, dates: seasonal_naive(train, len(dates), annual_lag)),
+        ModelSpec(
+            f"seasonal_naive_scaled_lag_{annual_lag}_w{short_window}",
+            "every_cutoff",
+            lambda train, dates: level_scaled_seasonal_naive(train, len(dates), annual_lag, short_window),
+        ),
+        ModelSpec(
+            f"seasonal_naive_scaled_lag_{annual_lag}_w{scale_window_long}_damped",
+            "every_cutoff",
+            lambda train, dates: level_scaled_seasonal_naive(train, len(dates), annual_lag, scale_window_long, 0.5),
+        ),
+        ModelSpec(
+            f"seasonal_average_lag_{annual_lag}_y2",
+            "every_cutoff",
+            lambda train, dates: seasonal_average(train, len(dates), annual_lag, 2),
+        ),
+        ModelSpec(
+            f"seasonal_average_lag_{annual_lag}_y3",
+            "every_cutoff",
+            lambda train, dates: seasonal_average(train, len(dates), annual_lag, 3),
+        ),
+        ModelSpec(f"window_average_{medium_window}", "every_cutoff", lambda train, dates: window_average(train, len(dates), medium_window)),
+        ModelSpec(f"window_average_{long_window}", "every_cutoff", lambda train, dates: window_average(train, len(dates), long_window)),
+        ModelSpec("statsmodels_ets_weekly", "every_cutoff", lambda train, dates: ets_forecast(train, len(dates), grain)),
+        ModelSpec("statsmodels_sarimax_weekly", "every_cutoff", lambda train, dates: sarimax_forecast(train, len(dates), grain)),
+        ModelSpec("statsforecast_auto_arima", "every_cutoff_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_auto_arima", grain)),
+        ModelSpec("statsforecast_auto_ets", "every_cutoff_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_auto_ets", grain)),
+        ModelSpec("statsforecast_mstl_auto_arima", "every_cutoff_mstl_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_mstl_auto_arima", grain)),
+        ModelSpec("statsforecast_mstl_auto_ets", "every_cutoff_mstl_auto_classical", lambda train, dates: statsforecast_forecast(train, len(dates), "statsforecast_mstl_auto_ets", grain)),
         ModelSpec(
             "sklearn_hist_gradient_boosting",
             "every_cutoff_recursive",
@@ -474,6 +749,7 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
                 train,
                 dates,
                 opening_features,
+                grain,
             ),
         ),
         ModelSpec(
@@ -484,6 +760,7 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
                 train,
                 dates,
                 opening_features,
+                grain,
             ),
         ),
         ModelSpec(
@@ -494,12 +771,13 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
                 train,
                 dates,
                 opening_features,
+                grain,
             ),
         ),
         ModelSpec(
             "sklearn_ridge_lags",
             "every_cutoff_recursive",
-            lambda train, dates: predict_sklearn_recursive(lambda: Ridge(alpha=10.0), train, dates, opening_features),
+            lambda train, dates: predict_sklearn_recursive(lambda: Ridge(alpha=10.0), train, dates, opening_features, grain),
         ),
         ModelSpec(
             "sklearn_hist_gradient_boosting_direct",
@@ -509,9 +787,14 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
                 train,
                 dates,
                 opening_features,
+                grain,
             ),
         ),
     ]
+    if grain == DAILY_GRAIN:
+        specs.insert(4, ModelSpec("same_weekday_average_8w", "every_cutoff", lambda train, dates: same_weekday_average(train, dates, 8)))
+    else:
+        specs.insert(2, ModelSpec(f"window_average_{short_window}", "every_cutoff", lambda train, dates: window_average(train, len(dates), short_window)))
     if LGBMRegressor is not None:
         specs.append(
             ModelSpec(
@@ -531,6 +814,7 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
                     train,
                     dates,
                     opening_features,
+                    grain,
                 ),
             )
         )
@@ -552,6 +836,7 @@ def model_specs(horizon: int, openings: pd.DataFrame | None = None) -> list[Mode
                     train,
                     dates,
                     opening_features,
+                    grain,
                 ),
             )
         )
@@ -627,16 +912,26 @@ def build_ensembles(preds: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run_backtests(df: pd.DataFrame, horizons: tuple[int, ...], max_cutoffs: int | None, openings: pd.DataFrame | None = None, model_names: set[str] | None = None) -> pd.DataFrame:
+def run_backtests(
+    df: pd.DataFrame,
+    horizons: tuple[int, ...],
+    max_cutoffs: int | None,
+    openings: pd.DataFrame | None = None,
+    model_names: set[str] | None = None,
+    grain: str = DAILY_GRAIN,
+) -> pd.DataFrame:
+    grain = normalize_grain(grain)
     all_rows = []
     for horizon in horizons:
-        cutoffs = build_cutoffs(df, horizon, max_cutoffs)
-        specs = model_specs(horizon, openings)
+        cutoffs = build_cutoffs(df, horizon, max_cutoffs, grain)
+        specs = model_specs(horizon, openings, grain)
         if model_names:
             specs = [spec for spec in specs if spec.name in model_names]
         for cutoff in cutoffs:
             train = df[df["ds"] <= cutoff].copy()
-            test = df[(df["ds"] > cutoff) & (df["ds"] <= cutoff + pd.Timedelta(days=horizon))].copy()
+            test = df[(df["ds"] > cutoff) & (df["ds"] <= cutoff + horizon_delta(horizon, grain))].copy()
+            if len(test) != horizon:
+                raise ValueError(f"Cutoff {cutoff.date()} has {len(test)} test rows, expected {horizon}.")
             dates = test["ds"].reset_index(drop=True)
             for spec in specs:
                 started = time.perf_counter()
@@ -734,15 +1029,16 @@ def plot_outputs(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.DataFrame, o
     plt.close()
 
 
-def write_future_forecast(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.DataFrame, output_dir: Path) -> None:
+def write_future_forecast(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.DataFrame, output_dir: Path, grain: str = DAILY_GRAIN) -> None:
+    grain = normalize_grain(grain)
     horizon = 91 if 91 in set(preds["horizon"]) else int(preds["horizon"].max())
     # ensemble_* rows are excluded: their candidates were selected on these same
     # folds (leaky ranking), and their varying aggregations (median, weighted)
     # were previously misreproduced here as a plain mean.
     eligible = metrics[(metrics["horizon"] == horizon) & ~metrics["model_name"].str.startswith("ensemble")]
     best_model = eligible.sort_values("wape").iloc[0]["model_name"]
-    base_models = {spec.name: spec for spec in model_specs(horizon, OPENINGS_DF)}
-    future_dates = pd.Series(pd.date_range(df["ds"].max() + pd.Timedelta(days=1), periods=horizon, freq="D"))
+    base_models = {spec.name: spec for spec in model_specs(horizon, OPENINGS_DF, grain)}
+    future_dates = pd.Series(pd.date_range(df["ds"].max() + horizon_delta(1, grain), periods=horizon, freq=freq_for_grain(grain)))
     forecast = base_models[best_model].predict(df, future_dates)
     model_name = best_model
 
@@ -772,7 +1068,7 @@ def write_future_forecast(df: pd.DataFrame, preds: pd.DataFrame, metrics: pd.Dat
     pd.DataFrame(rows).to_csv(output_dir / "final_forecast.csv", index=False)
 
 
-def write_manifest(df: pd.DataFrame, preds: pd.DataFrame, output_dir: Path, input_path: Path) -> None:
+def write_manifest(df: pd.DataFrame, preds: pd.DataFrame, output_dir: Path, input_path: Path, grain: str = DAILY_GRAIN) -> None:
     manifest = {
         "run_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "seed": SEED,
@@ -781,6 +1077,8 @@ def write_manifest(df: pd.DataFrame, preds: pd.DataFrame, output_dir: Path, inpu
         "date_min": str(df["ds"].min().date()),
         "date_max": str(df["ds"].max().date()),
         "rows": int(len(df)),
+        "grain": normalize_grain(grain),
+        "freq": df.attrs.get("freq", freq_for_grain(grain)),
         "missing_days_filled": int(df.attrs.get("missing_days_filled", 0)),
         "horizons": sorted(preds["horizon"].unique().tolist()),
         "models": sorted(preds["model_name"].unique().tolist()),
@@ -799,6 +1097,8 @@ def main() -> None:
     parser.add_argument("--opening-info", default=None, help="Optional unit-opening CSV with Opening_date/open_date.")
     parser.add_argument("--missing-date-strategy", choices=["interpolate", "zero", "error"], default="interpolate")
     parser.add_argument("--models", default="", help="Optional comma-separated ModelSpec names to run.")
+    parser.add_argument("--grain", choices=[DAILY_GRAIN, WEEKLY_GRAIN], default=DAILY_GRAIN)
+    parser.add_argument("--weekly-freq", default=DEFAULT_WEEKLY_FREQ, help="Pandas weekly frequency used when --grain weekly.")
     args = parser.parse_args()
 
     global OPENINGS_DF
@@ -809,12 +1109,12 @@ def main() -> None:
 
     horizons = tuple(int(h.strip()) for h in args.horizons.split(",") if h.strip())
     OPENINGS_DF = load_openings(Path(args.opening_info)) if args.opening_info else None
-    df = load_sales(input_path, fill_missing=args.missing_date_strategy, audit_path=output_dir / "missing_sales_dates_audit.csv")
+    df = load_sales(input_path, fill_missing=args.missing_date_strategy, audit_path=output_dir / "missing_sales_dates_audit.csv", grain=args.grain, weekly_freq=args.weekly_freq)
     if OPENINGS_DF is not None:
-        feature_dates = add_opening_features(pd.DataFrame({"ds": pd.date_range(df["ds"].min(), df["ds"].max(), freq="D")}), OPENINGS_DF)
+        feature_dates = add_opening_features(pd.DataFrame({"ds": pd.date_range(df["ds"].min(), df["ds"].max(), freq=freq_for_grain(args.grain, args.weekly_freq))}), OPENINGS_DF)
         feature_dates.to_csv(output_dir / "opening_features_by_date.csv", index=False)
     model_names = {m.strip() for m in args.models.split(",") if m.strip()} or None
-    preds = run_backtests(df, horizons, args.max_cutoffs, OPENINGS_DF, model_names)
+    preds = run_backtests(df, horizons, args.max_cutoffs, OPENINGS_DF, model_names, args.grain)
     preds.to_csv(output_dir / "model_backtest_predictions.csv", index=False)
     try:
         preds.to_parquet(output_dir / "model_backtest_predictions.parquet", index=False)
@@ -822,9 +1122,9 @@ def main() -> None:
         pass
 
     metrics = write_metrics(preds, output_dir)
-    write_future_forecast(df, preds, metrics["by_horizon"], output_dir)
+    write_future_forecast(df, preds, metrics["by_horizon"], output_dir, args.grain)
     plot_outputs(df, preds, metrics["by_horizon"], output_dir)
-    write_manifest(df, preds, output_dir, input_path)
+    write_manifest(df, preds, output_dir, input_path, args.grain)
     if OPENINGS_DF is not None:
         manifest_path = output_dir / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
