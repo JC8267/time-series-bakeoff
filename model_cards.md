@@ -1,10 +1,146 @@
 # Production Model Cards
 
-Last updated: 2026-06-10
+Last updated: 2026-06-25
 
 Validation fold note: every WAPE/bias claim below should be read with its fold count. The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon, phase 3 trained stack weights on the earlier aligned cutoff and evaluated on 2 held-out cutoffs, and phase 5 used 1 final holdout. The latest 180/365 validation used 3 rolling cutoffs per horizon. Fewer-fold sensitivity tests can make `seasonal_naive_lag_364` win; treat those as sensitivity checks unless the ensemble candidates are rebuilt and scored on the same folds.
 
 2026-06-10 update: multi-fold nested final validations settled the rankings at every horizon (`run_multifold_final_validation.py`; 91 days: 5 folds, run_id `20260610T124857Z`; 28 days: 6 non-overlapping folds, run_id `20260610T124426Z`; 180 days: 5 folds, run_id `20260610T112337Z`; 365 days: 1 fold plus a 17-window parameter-free sweep, run_id `20260610T113121Z`; outputs in the matching `outputs_multifold_*_validation/` directories). The 28/91-day runs were rerun after `opening_info.csv` grew from 4 to 10 openings (initial run_ids `20260610T044622Z`/`20260610T042656Z`, archived); the richer opening features did not change any verdict and slightly worsened the opening-aware ML models, consistent with the aggregate event study (`estimate_opening_lift_event_study.py`) finding per-unit opening lift unidentifiable from total-sales data. The production recommendation at all four horizons is now `seasonal_naive_lag_364`. The learned convex stacks lost every leak-free fold at every horizon; their earlier wins traced to phase-3 weight-fitting windows overlapping the evaluation windows (31 days at 91d, 19 days at 28d, ~5 months at 180d, ~11 months at 365d). A fixed 0.75 seasonal-naive / 0.25 TimesFM blend is pre-registered as the tracked challenger (see `model_usage_plan.md`). `run_production_forecast.py` packages the production rows (`final_<h>d_seasonal_naive_production`) and challenger rows with leak-free residual-quantile intervals. See the per-card verdicts below.
+
+2026-06-24/25 weekly-grain update: weekly validation now exists for 4/12/26/52-week horizons using complete `W-WED` weeks (`outputs_weekly_bakeoff_baselines_4_12_26_52`, `outputs_weekly_multifold_*w_baseline_pool`, `outputs_weekly_multifold_*w_timesfm_pool`, `outputs_weekly_multifold_*w_foundation_pool`, `outputs_weekly_multifold_*w_ml_pool`, `outputs_weekly_multifold_*w_daily_reagg_pool`, and `outputs_weekly_multifold_*w_daily_reagg_foundation_pool`). The weekly primary recommendation is now `daily_reagg_seasonal_naive_lag_365`: forecast daily with lag 365, then sum into `W-WED` weeks. Native `seasonal_naive_lag_52` remains the benchmark. Same-fold diagnostic ensembles beat it in the full baseline grid, but those ensembles are selected on the same rows they score. Honest nested baseline, broad foundation, standalone ML tree pools, and a broad foundation pool that included lag-365 did not beat the standalone lag-365 rule. The retired holiday-aligned weekly rule worsened the holiday folds because its anchor can jump a full weekly bucket when the holiday weekday changes. The 12/26/52-week nested reads use 4-week steps and are overlapping windows, not independent folds.
+
+2026-06-25 seasonal trend/averaging update: level-scaled seasonal naive and recency-weighted multi-year seasonal averages were added at both daily and weekly grains (`outputs_multifold_*d_trend_seasonal_pool`, `outputs_weekly_multifold_*w_trend_seasonal_pool`). Standalone scaled/multi-year rules did not beat the existing daily or weekly champions. Overlap-aware significance tests on extended nested windows (`outputs_forecast_significance_tests`) found the daily 180d inverse-WAPE stack directionally better but not statistically confirmed (mean WAPE diff -0.00536, HAC p=0.147, block CI crosses zero). Weekly 26w `pool_median` has a small but statistically cleaner edge over `daily_reagg_seasonal_naive_lag_365` (mean diff -0.00140, HAC p=0.017), so track it as the 26w challenger; keep lag-365 as the general weekly default until the 26w challenger is packaged and holds up after refresh.
+
+2026-06-25 interval coverage update: `run_interval_coverage_backtest.py` measured rolling, prior-cutoff-only residual-quantile coverage. Daily and weekly production scripts now support `--interval-mode global|segment`. Default remains `global`: segment conditioning helped some daily holiday slices but reduced overall coverage and badly undercovered short weekly holiday rows.
+
+## `weekly_daily_reagg_seasonal_naive_lag_365`
+
+Purpose: weekly-grain total-sales production forecast.
+
+Validated horizons: 4, 12, 26, and 52 weeks.
+
+Use for:
+
+- Weekly-grain planning when forecasts are consumed as `W-WED` weekly totals.
+- Forecast windows where holiday week allocation matters.
+- Benchmarking future weekly ensembles against a parameter-free calendar-date baseline.
+
+Do not use for:
+
+- Daily forecast delivery; use the day-grain cards instead.
+- Opening incrementality attribution by itself.
+
+Notes:
+
+- Forecasts daily sales with a 365-day lag, then sums the daily forecasts into `W-WED` buckets.
+- This differs from daily lag-364 reaggregation. Lag 364 is exactly equivalent to native weekly `seasonal_naive_lag_52` under `W-WED` buckets, so it cannot fix the weekly phase issue.
+- The main lift is holiday allocation: at 4 weeks the 2025-12-03 fold improved from 0.1048 WAPE for native weekly seasonal naive to 0.0496.
+- In the lag-365 foundation pool, no ensemble beat standalone lag-365 at any horizon. The closest rows were `nested_inverse_wape_stack` at 4 weeks, `pool_median` at 12/26/52 weeks; all had higher mean WAPE than lag-365.
+- In the seasonal trend/averaging pool, `pool_median` beat lag-365 at 26w and 52w but not at 4w/12w. The 26w edge survived an overlap-aware test; the 52w read remains too small to trust.
+- Weekly production output is packaged by `run_weekly_production_forecast.py` in `outputs_weekly_production_forecast/weekly_production_forecast.csv`, with global residual-quantile intervals by default and optional holiday/rest segment intervals for diagnostics.
+- The 26- and 52-week evidence is still data-limited because the final folds are heavily overlapping.
+
+Latest validation:
+
+- 4 weeks: mean WAPE 0.0386 vs 0.0489 for `seasonal_naive_lag_52`; mean bias 0.0039; 3/5 wins.
+- 12 weeks: mean WAPE 0.0410 vs 0.0505; mean bias -0.0032; 4/5 wins.
+- 26 weeks: mean WAPE 0.0352 vs 0.0397; mean bias -0.0108; 4/5 wins, heavily overlapping read.
+- 52 weeks: mean WAPE 0.0347 vs 0.0389; mean bias 0.0000; 2/2 wins, effectively one annual read.
+- Best lag-365-included ensemble WAPE: 0.0492 at 4w, 0.0523 at 12w, 0.0401 at 26w, and 0.0378 at 52w. These do not beat standalone lag-365.
+
+Production read: use `daily_reagg_seasonal_naive_lag_365` as the weekly-grain default for 4/12/26/52 weeks. Track the 26w `pool_median` seasonal-trend challenger, but do not replace the packaged default until it is emitted as a named production row with intervals and survives a refresh.
+
+## `weekly_seasonal_naive_lag_52`
+
+Purpose: weekly-grain total-sales benchmark.
+
+Validated horizons: 4, 12, 26, and 52 weeks.
+
+Use for:
+
+- Weekly-grain planning when forecasts are consumed as weekly totals.
+- Benchmarking weekly ensembles and foundation models.
+- Sensitivity comparison beside `daily_reagg_seasonal_naive_lag_365`.
+
+Do not use for:
+
+- Daily forecast delivery; use the day-grain cards instead.
+- Opening incrementality attribution by itself.
+
+Notes:
+
+- Weekly rows are complete weeks ending Wednesday (`W-WED`), matching the current data cutoff of 2026-04-01.
+- Full baseline grid used 114/27/23/17 cutoffs for 4/12/26/52 weeks.
+- Nested baseline, broad foundation, and standalone ML pools did not beat this benchmark robustly, but daily lag-365 reaggregation did.
+- Weekly ML pools with `sklearn_hist_gradient_boosting`, direct HistGradientBoosting, random forest, Extra Trees, ridge, and LightGBM did not beat this benchmark. Best standalone ML WAPE was 0.0560 at 4w for ridge, 0.0587 at 12w for LightGBM, 0.0684 at 26w for direct HistGradientBoosting, and 0.0597 at 52w for direct HistGradientBoosting.
+- The 12/26/52-week nested reads are overlapping: effective independent windows are about 2.33, 1.62, and 1.08 respectively. The 52-week read is data-limited and has only 2 final folds.
+- Weekly `data_gap_filled_flag` is carried through aggregation but is not used for metric weighting. These runs had no filled missing days.
+
+Latest validation:
+
+- 4 weeks: mean WAPE 0.0489, mean bias 0.0045 across 5 non-overlapping nested windows; lost to `daily_reagg_seasonal_naive_lag_365` by 0.0103 mean WAPE.
+- 12 weeks: mean WAPE 0.0505, mean bias -0.0031 across 5 overlapping nested windows; lost by 0.0095 mean WAPE.
+- 26 weeks: mean WAPE 0.0397, mean bias -0.0117 across 5 heavily overlapping nested windows; lost by 0.0045 mean WAPE.
+- 52 weeks: mean WAPE 0.0389, mean bias -0.0001 across 2 heavily overlapping nested windows; lost by 0.0042 mean WAPE.
+
+Production read: keep `seasonal_naive_lag_52` as the benchmark row, not the weekly default.
+
+## `weekly_seasonal_naive_holiday_aligned_lag_52`
+
+Purpose: retired weekly-grain holiday-alignment experiment.
+
+Validated horizons: 4, 12, 26, and 52 weeks.
+
+Use for:
+
+- Research comparisons against plain weekly seasonal naive near Thanksgiving, Christmas, and New Year.
+
+Do not use for:
+
+- Production weekly forecasts.
+- Winner claims over `seasonal_naive_lag_52`.
+
+Notes:
+
+- This fixed rule mapped holiday-adjacent target weeks to the prior year's matching holiday week and fell back to `seasonal_naive_lag_52` elsewhere.
+- It failed for a concrete reason: when a holiday's weekday changes, the target anchor can jump a full `W-WED` bucket. At the 2025-12-03 4-week fold it worsened WAPE from 0.1048 to 0.1794.
+- It has been removed from active `model_specs`; do not patch or reuse it.
+
+Latest validation:
+
+- 4 weeks: mean WAPE 0.0686 vs 0.0489 for `seasonal_naive_lag_52`; 0/5 wins.
+- 12 weeks: mean WAPE 0.0697 vs 0.0505 for `seasonal_naive_lag_52`; 0/5 wins.
+- 26 weeks: mean WAPE 0.0486 vs 0.0397 for `seasonal_naive_lag_52`; 0/5 wins.
+- 52 weeks: mean WAPE 0.0461 vs 0.0389 for `seasonal_naive_lag_52`; 0/2 wins.
+
+## `weekly_pool_median_seasonal_naive_timesfm`
+
+Purpose: weekly-grain TimesFM sensitivity/challenger.
+
+Validated horizons: 4 and 12 weeks as a tracked challenger; checked and rejected at 26 and 52 weeks.
+
+Use for:
+
+- Monitoring whether a simple seasonal-naive/TimesFM blend continues to beat weekly seasonal naive.
+- Sensitivity comparison when a foundation-model signal is desired.
+
+Do not use for:
+
+- Default weekly production forecasts until it wins future out-of-exploration folds.
+- Opening or promotion incrementality attribution.
+
+Notes:
+
+- This is the row named `pool_median` in the narrow pool containing only `seasonal_naive_lag_52` and `timesfm_2_5`.
+- It beat `seasonal_naive_lag_52` on mean WAPE at 4 and 12 weeks, but the evidence is not decisive: 2/5 wins at 4 weeks and 3/5 wins at 12 weeks.
+- At 4 weeks, the net mean edge is driven by the 2025-12-03 holiday fold: pool median WAPE 0.0688 vs 0.1048 for `seasonal_naive_lag_52`. Seasonal naive has the better 4-week median WAPE (0.0328 vs 0.0483), so interpret the challenger as tail/holiday cushioning rather than a generally better forecast.
+- The advantage did not survive adding Chronos and StatsForecast MSTL models to the broader foundation pool.
+
+Latest validation:
+
+- 4 weeks: mean WAPE 0.0455 vs 0.0489 for `seasonal_naive_lag_52`; mean bias 0.0029; 2/5 wins.
+- 12 weeks: mean WAPE 0.0472 vs 0.0505 for `seasonal_naive_lag_52`; mean bias 0.0000; 3/5 wins.
+- 26 weeks: mean WAPE 0.0543 vs 0.0397 for `seasonal_naive_lag_52`; rejected.
+- 52 weeks: mean WAPE 0.0510 vs 0.0389 for `seasonal_naive_lag_52`; rejected on 2 feasible folds.
 
 ## `final_28d_extra_trees_opening_timesfm_pool`
 

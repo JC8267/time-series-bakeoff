@@ -1,6 +1,6 @@
 # Forecasting and Counterfactual Model Usage Plan
 
-Last updated: 2026-06-10
+Last updated: 2026-06-25
 
 This document describes which validated models and ensembles to use for different project types, and how to implement each workflow with the current bakeoff pipeline.
 
@@ -14,6 +14,7 @@ This document describes which validated models and ensembles to use for differen
 | Long-horizon pure forecast benchmark | 365 days | `final_365d_seasonal_naive_benchmark` | Won the single leak-free nested fold (WAPE 0.0568 vs 0.0806) and the 17-window sweep. The stack's focused-run win was contaminated by a ~11-month weight-fitting overlap; the stack is now a sensitivity comparator. |
 | Long-horizon opening-sensitive forecast | 180 days | `final_180d_hist_gradient_boosting_opening_sensitive` | Opening-sensitive scenario model. It did not beat the seasonal/stack benchmarks on WAPE, so use it for counterfactual sensitivity, not pure accuracy claims. |
 | Long-horizon opening-sensitive forecast | 365 days | `final_365d_hist_gradient_boosting_opening_sensitive` | Opening-sensitive scenario model. It did not beat the seasonal/stack benchmarks on WAPE, so use it for counterfactual sensitivity, not pure accuracy claims. |
+| Weekly-grain forecast benchmark | 4, 12, 26, 52 weeks | `daily_reagg_seasonal_naive_lag_365` | Daily lag-365 forecasts summed into `W-WED` weeks beat native weekly `seasonal_naive_lag_52` at all four weekly horizons. Evidence is strongest at 4 and 12 weeks; 26 and 52 weeks remain overlapping-window reads. |
 
 Latest rerun artifacts:
 
@@ -36,6 +37,20 @@ Latest rerun artifacts:
 | Opening lift event study | `outputs_opening_event_study` (`estimate_opening_lift_event_study.py`) |
 | 180-day multi-fold nested validation | `outputs_multifold_180d_validation` (run_id `20260610T112337Z`) |
 | 365-day multi-fold nested validation | `outputs_multifold_365d_validation` (run_id `20260610T113121Z`) |
+| Daily seasonal trend/averaging pools | `outputs_multifold_28d_trend_seasonal_pool`, `outputs_multifold_91d_trend_seasonal_pool`, `outputs_multifold_180d_trend_seasonal_pool`, `outputs_multifold_365d_trend_seasonal_pool` |
+| Daily 180d extended trend significance pool | `outputs_multifold_180d_trend_seasonal_extended_pool` |
+| Weekly baseline bakeoff | `outputs_weekly_bakeoff_baselines_4_12_26_52` (weekly `W-WED`, horizons 4/12/26/52) |
+| Weekly nested baseline pools | `outputs_weekly_multifold_4w_baseline_pool`, `outputs_weekly_multifold_12w_baseline_pool`, `outputs_weekly_multifold_26w_baseline_pool`, `outputs_weekly_multifold_52w_baseline_pool` |
+| Weekly nested TimesFM pools | `outputs_weekly_multifold_4w_timesfm_pool`, `outputs_weekly_multifold_12w_timesfm_pool`, `outputs_weekly_multifold_26w_timesfm_pool`, `outputs_weekly_multifold_52w_timesfm_pool` |
+| Weekly nested foundation pools | `outputs_weekly_multifold_4w_foundation_pool`, `outputs_weekly_multifold_12w_foundation_pool`, `outputs_weekly_multifold_26w_foundation_pool`, `outputs_weekly_multifold_52w_foundation_pool` |
+| Weekly nested ML pools | `outputs_weekly_multifold_4w_ml_pool`, `outputs_weekly_multifold_12w_ml_pool`, `outputs_weekly_multifold_26w_ml_pool`, `outputs_weekly_multifold_52w_ml_pool` |
+| Weekly nested daily-reaggregation pools | `outputs_weekly_multifold_4w_daily_reagg_pool`, `outputs_weekly_multifold_12w_daily_reagg_pool`, `outputs_weekly_multifold_26w_daily_reagg_pool`, `outputs_weekly_multifold_52w_daily_reagg_pool` |
+| Weekly nested lag-365 foundation pools | `outputs_weekly_multifold_4w_daily_reagg_foundation_pool`, `outputs_weekly_multifold_12w_daily_reagg_foundation_pool`, `outputs_weekly_multifold_26w_daily_reagg_foundation_pool`, `outputs_weekly_multifold_52w_daily_reagg_foundation_pool` |
+| Weekly seasonal trend/averaging pools | `outputs_weekly_multifold_4w_trend_seasonal_pool`, `outputs_weekly_multifold_12w_trend_seasonal_pool`, `outputs_weekly_multifold_26w_trend_seasonal_pool`, `outputs_weekly_multifold_52w_trend_seasonal_pool` |
+| Weekly 26w extended trend significance pool | `outputs_weekly_multifold_26w_trend_seasonal_extended_pool` |
+| Overlap-aware significance tests | `outputs_forecast_significance_tests` |
+| Interval coverage backtest | `outputs_interval_coverage_backtest` |
+| Weekly production package | `outputs_weekly_production_forecast` |
 
 Artifact notes:
 
@@ -61,14 +76,76 @@ Latest key validation metrics:
 | 365 | `nested_convex_stack` | 0.0806 | -0.0415 | 1 nested fold (2026-06-10) |
 | 365 | `phase3_heldout_cutoffs_convex_stack` | 0.0563 | -0.0080 | 3 rolling cutoffs (contaminated; see caveat) |
 
+Seasonal trend/averaging experiment added 2026-06-25:
+
+- Added level-scaled seasonal naive (`seasonal_naive_scaled_lag_*`) and recency-weighted multi-year seasonal average (`seasonal_average_lag_*`) candidates at daily and weekly grains.
+- Standalone scaled and multi-year candidates did not beat the current daily or weekly champions. The 4-week/full scaling was especially volatile; the 8-week damped scaling was closer but still worse than the simple seasonal champion.
+- Daily seasonal-only `nested_inverse_wape_stack` is worth tracking as a challenger at 91 and 180 days: 91d mean WAPE 0.0748 vs 0.0757 for `seasonal_naive_lag_364` (3/5 wins), and 180d mean WAPE 0.0611 vs 0.0638 (4/5 wins). Keep `seasonal_naive_lag_364` as production because the 91d gain is tiny, 91/180 folds overlap, and production packaging is still benchmark-first.
+- Weekly `pool_median` of the lag-365 reaggregation and seasonal trend variants barely edged standalone lag-365 at 26w (0.0348 vs 0.0352, 3/5 wins) and 52w (0.03469 vs 0.03471, 1/2 wins). Treat this as a long-horizon sensitivity read, not a default change, because those folds are heavily overlapping and the improvement is within noise. At 4w and 12w, standalone `daily_reagg_seasonal_naive_lag_365` remains best.
+
+Overlap-aware significance tests added 2026-06-25:
+
+- Method: paired fold-window WAPE differences, Newey-West/HAC standard error with lag tied to the horizon/step overlap, and circular moving-block bootstrap with block length `ceil(horizon / grid_step)`. See `run_forecast_significance_tests.py` and `outputs_forecast_significance_tests`.
+- Daily 180d `nested_inverse_wape_stack` vs `seasonal_naive_lag_364`: 14 extended nested windows, 11/14 wins, mean WAPE diff -0.00536, HAC p=0.147, block-bootstrap 95% CI [-0.01073, +0.00001]. Directionally useful, not statistically confirmed.
+- Weekly 26w `pool_median` vs `daily_reagg_seasonal_naive_lag_365`: 14 extended nested windows, 12/14 wins, mean WAPE diff -0.00140, HAC p=0.017, block-bootstrap 95% CI [-0.00212, -0.00067]. This is the first overlap-adjusted evidence for a real weekly challenger, but the absolute gain is small and currently only validated at 26w.
+- Weekly 26w `pool_median` vs native `seasonal_naive_lag_52`: 14/14 wins, mean WAPE diff -0.00294, HAC p=0.00046. Keep native weekly seasonal naive as benchmark only.
+
+Interval coverage backtest added 2026-06-25:
+
+- `run_interval_coverage_backtest.py` emulates production residual-quantile intervals using only prior cutoffs. Daily and weekly production scripts now support `--interval-mode global|segment`; default is `global` because global intervals had better overall coverage in backtest.
+- Daily global interval coverage for `seasonal_naive_lag_364`: 80% coverage ranged 0.759-0.805 and 95% coverage ranged 0.941-0.962 across 28/91/180/365d. Segment conditioning improved daily holiday coverage at 180d (80% 0.654 -> 0.784; 95% 0.864 -> 0.941) but narrowed bands and reduced total 80% coverage at shorter horizons.
+- Weekly global interval coverage for `daily_reagg_seasonal_naive_lag_365`: 80% coverage ranged 0.680-0.771 and 95% coverage ranged 0.880-0.959 across 4/12/26/52w. Segment conditioning badly undercovered 4w holiday rows (95% 0.471), so keep global weekly intervals as the default and use segment coverage as a diagnostic.
+
+Weekly-grain validation added 2026-06-24 and extended 2026-06-25:
+
+- Grain: complete `W-WED` weeks aggregated from `daily_sales_data.csv`; 221 weekly rows from 2022-01-12 through 2026-04-01.
+- Horizons: 4, 12, 26, and 52 weekly rows.
+- Full baseline grid: `outputs_weekly_bakeoff_baselines_4_12_26_52` with 114/27/23/17 cutoffs at 4/12/26/52 weeks. Same-fold diagnostic ensembles beat seasonal naive at all four horizons, but they are candidate-selected on the same grid and remain exploratory.
+- Nested validation before daily reaggregation: baseline/window pools, broad foundation pools, and standalone ML tree models did not beat `seasonal_naive_lag_52` robustly. The narrow seasonal-naive/TimesFM pool median beat mean WAPE at 4 and 12 weeks, but the 4-week mean edge depended on the 2025-12-03 holiday fold, seasonal naive had the better 4-week median WAPE, and the challenger did not survive broader-pool comparisons.
+- Daily-to-weekly reaggregation resolved the main weekly phase issue. `daily_reagg_seasonal_naive_lag_364` is exactly equivalent to `seasonal_naive_lag_52` under `W-WED` buckets, but `daily_reagg_seasonal_naive_lag_365` aligns by calendar date and beat `seasonal_naive_lag_52` at all four horizons.
+- A broad foundation pool that included `daily_reagg_seasonal_naive_lag_365` did not find an ensemble that beat standalone lag-365 at any weekly horizon. The 52-week `pool_median` beat native weekly `seasonal_naive_lag_52`, but still trailed lag-365.
+- Weekly nested folds were stepped 4 weeks. Read them as overlapping windows, not independent folds, except at 4 weeks: effective independent windows are about 5.00 at 4w, 2.33 at 12w, 1.62 at 26w, and 1.08 at 52w.
+- Weekly ML pool coverage: `sklearn_hist_gradient_boosting`, `sklearn_hist_gradient_boosting_direct`, `sklearn_random_forest`, `sklearn_extra_trees`, `sklearn_ridge_lags`, and `mlforecast_style_lightgbm` were run with `opening_info.csv`. None beat `seasonal_naive_lag_52`. Ridge emitted ill-conditioned-matrix warnings and performed poorly at longer horizons.
+- The retired fixed `seasonal_naive_holiday_aligned_lag_52` candidate was tried for Thanksgiving/Christmas/New-Year alignment. It worsened the holiday folds because the holiday anchor can jump a full `W-WED` bucket when the holiday weekday changes; keep it out of active pools.
+
+| Weekly horizon | Candidate | Mean WAPE | Mean bias | Folds | Wins vs `seasonal_naive_lag_52` | Verdict |
+|---:|---|---:|---:|---:|---:|---|
+| 4 | `daily_reagg_seasonal_naive_lag_365` | 0.0386 | 0.0039 | 5 | 3/5 | Primary weekly forecast |
+| 4 | `seasonal_naive_lag_52` | 0.0489 | 0.0045 | 5 | benchmark | Benchmark |
+| 4 | `pool_median` of `seasonal_naive_lag_52` + `timesfm_2_5` | 0.0455 | 0.0029 | 5 | 2/5 | Track as challenger only |
+| 4 | lag-365 foundation `nested_inverse_wape_stack` | 0.0492 | 0.0030 | 5 | 3/5 | Worse than standalone lag-365 |
+| 12 | `daily_reagg_seasonal_naive_lag_365` | 0.0410 | -0.0032 | 5 | 4/5 | Primary weekly forecast |
+| 12 | `seasonal_naive_lag_52` | 0.0505 | -0.0031 | 5 | benchmark | Benchmark |
+| 12 | `pool_median` of `seasonal_naive_lag_52` + `timesfm_2_5` | 0.0472 | 0.0000 | 5 | 3/5 | Track as challenger only |
+| 12 | lag-365 foundation `pool_median` | 0.0523 | -0.0039 | 5 | 2/5 | Worse than standalone lag-365 |
+| 26 | `daily_reagg_seasonal_naive_lag_365` | 0.0352 | -0.0108 | 5 | 4/5 | Primary weekly forecast; overlapping windows |
+| 26 | `seasonal_naive_lag_52` | 0.0397 | -0.0117 | 5 | benchmark | Benchmark; overlapping windows |
+| 26 | lag-365 foundation `pool_median` | 0.0401 | -0.0177 | 5 | 1/5 | Worse than standalone lag-365 |
+| 52 | `daily_reagg_seasonal_naive_lag_365` | 0.0347 | 0.0000 | 2 | 2/2 | Primary weekly forecast; heavily overlapping |
+| 52 | `seasonal_naive_lag_52` | 0.0389 | -0.0001 | 2 | benchmark | Benchmark; heavily overlapping |
+| 52 | lag-365 foundation `pool_median` | 0.0378 | -0.0146 | 2 | 1/2 | Beats seasonal, worse than lag-365 |
+
+Holiday/rest split from `outputs_weekly_multifold_*w_daily_reagg_pool`:
+
+| Horizon | Segment | `daily_reagg_lag_365` WAPE | `seasonal_naive_lag_52` WAPE | Read |
+|---:|---|---:|---:|---|
+| 4 | Holiday weeks | 0.0418 | 0.0638 | Main improvement; 2025-12-03 fold drops from 0.1048 to 0.0496 |
+| 4 | Rest weeks | 0.0364 | 0.0390 | Small improvement |
+| 12 | Holiday weeks | 0.0409 | 0.0619 | Main improvement |
+| 12 | Rest weeks | 0.0427 | 0.0452 | Small improvement |
+| 26 | Holiday weeks | 0.0356 | 0.0454 | Improvement, but overlapping read |
+| 52 | Holiday weeks | 0.0398 | 0.0578 | Improvement, but heavily overlapping read |
+
 Fold-count caveat:
 
 - The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon. Phase 3 stacking trained on the earlier aligned cutoff and evaluated on 2 held-out cutoffs. Phase 5 is a single final holdout window.
 - The phase-3/phase-5 stack metrics are contaminated at every horizon: the weight-fitting windows overlap the evaluation windows by 19 days at 28d (fit cutoff 2026-02-23), 31 days at 91d (fit cutoff 2025-11-01), ~5 months at 180d (fit cutoff 2025-08-01), and ~11 months at 365d (fit cutoff 2025-02-01). Standalone models like `sklearn_extra_trees` have no weight fitting and are unaffected.
 - The 2026-06-10 multi-fold nested validations (`run_multifold_final_validation.py`, weights refit per fold leak-free) supersede those numbers: `seasonal_naive_lag_364` won 4 of 6 folds at 28 days, all 5 folds at 91 and 180 days, and the single feasible fold at 365 days. The 91/180-day folds overlap (28-day steps), so they are not fully independent; the 28-day folds do not overlap; the 365-day result rests on 1 nested fold plus a 17-window parameter-free sweep.
+- Weekly nested validations use a 4-week grid step. At 12/26/52 weeks, consecutive holdouts overlap by 8/22/48 weeks respectively; report them as overlapping windows with the effective independent-window approximation above, not as independent folds.
 - The latest 180/365 validation used 3 rolling cutoffs per horizon. This is intentionally underpowered.
 - Tests with fewer folds can flip the apparent winner back to `seasonal_naive_lag_364`. Do not compare a naive-only, fewer-fold run against an ensemble run unless the ensemble is rebuilt and scored on the same folds.
 - When fold count is reduced, report the result as a sensitivity check rather than a replacement recommendation unless phase 3/phase 5 are rerun under the same fold design.
+- Weekly `data_gap_filled_flag` is summed into weekly rows but not consumed by model scoring or weighting. Current weekly runs had `missing_days_filled = 0`; if future weekly data has interpolated days, add an explicit quality note or down-weight those weeks before treating the metrics as comparable.
 
 Model additions in the latest rerun:
 
@@ -110,6 +187,15 @@ Default choices:
 | 92-180 days | `seasonal_naive_lag_364` (won all 5 multi-fold folds); opening-sensitive models for scenario sensitivity when openings matter |
 | 181-365 days | `seasonal_naive_lag_364` (won the leak-free fold and the 17-window sweep); opening-sensitive models when future openings materially affect the forecast |
 
+Weekly-grain choices:
+
+| Forecast length | Use |
+|---:|---|
+| 4 weeks | `daily_reagg_seasonal_naive_lag_365`; keep `seasonal_naive_lag_52` as benchmark |
+| 12 weeks | `daily_reagg_seasonal_naive_lag_365`; keep `seasonal_naive_lag_52` as benchmark |
+| 26 weeks | `daily_reagg_seasonal_naive_lag_365`; overlapping-window evidence, so report the caveat |
+| 52 weeks | `daily_reagg_seasonal_naive_lag_365`; only about 1 independent annual read is feasible with current weekly history |
+
 Implementation (primary, all horizons):
 
 ```powershell
@@ -124,6 +210,24 @@ Primary output: `outputs_production_forecast/production_forecast.csv` with rows:
 final_<h>d_seasonal_naive_production       (production forecast)
 challenger_<h>d_blend_snl75_tfm25          (pre-registered challenger, tracked not shipped)
 ```
+
+Weekly implementation:
+
+```powershell
+python run_weekly_production_forecast.py `
+  --sales-csv daily_sales_data.csv `
+  --horizons 4,12,26,52 `
+  --output-dir outputs_weekly_production_forecast
+```
+
+Primary weekly output: `outputs_weekly_production_forecast/weekly_production_forecast.csv` with rows:
+
+```text
+final_<h>w_daily_reagg_seasonal_naive_lag_365
+benchmark_<h>w_seasonal_naive_lag_52
+```
+
+Intervals are residual quantiles from the daily-reaggregation weekly grid. Default interval mode is `global`; `--interval-mode segment` is available for holiday/rest diagnostics but is not the default because the backtest undercovered short weekly holiday windows.
 
 Intervals are residual quantiles from each rule's own recent multifold grid windows; the manifest records the grid and window count per horizon. Requires the matching `outputs_multifold_<h>d_validation/` grid (run `run_multifold_final_validation.py` first for a new horizon or after a data refresh).
 
