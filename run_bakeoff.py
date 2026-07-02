@@ -446,6 +446,74 @@ def seasonal_naive(train: pd.DataFrame, horizon: int, lag: int) -> np.ndarray:
     return values
 
 
+def gregorian_easter(year: int) -> pd.Timestamp:
+    """Anonymous Gregorian algorithm."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return pd.Timestamp(year=year, month=month, day=day)
+
+
+def thanksgiving_date(year: int) -> pd.Timestamp:
+    first = pd.Timestamp(year=year, month=11, day=1)
+    return first + pd.Timedelta(days=(3 - first.dayofweek) % 7 + 21)
+
+
+def memorial_day(year: int) -> pd.Timestamp:
+    may31 = pd.Timestamp(year=year, month=5, day=31)
+    return may31 - pd.Timedelta(days=(may31.dayofweek - 0) % 7)
+
+
+def labor_day(year: int) -> pd.Timestamp:
+    sep1 = pd.Timestamp(year=year, month=9, day=1)
+    return sep1 + pd.Timedelta(days=(0 - sep1.dayofweek) % 7)
+
+
+def holiday_anchor_aware_source_dates(target_dates: pd.Series, default_lag: int = 364) -> pd.Series:
+    """Map each target date to last year's source date by holiday anchor type."""
+    dates = pd.to_datetime(target_dates).dt.normalize()
+    source_dates = []
+    for date in dates:
+        date_anchored = (date.month == 12 and date.day >= 18) or (date.month == 1 and date.day <= 3) or (date.month == 7 and 1 <= date.day <= 7)
+        if date_anchored:
+            source_dates.append(date - pd.DateOffset(years=1))
+            continue
+
+        anchors = [
+            (thanksgiving_date(date.year), 7),
+            (gregorian_easter(date.year), 7),
+            (memorial_day(date.year), 3),
+            (labor_day(date.year), 3),
+        ]
+        if any(abs((date - anchor).days) <= radius for anchor, radius in anchors):
+            source_dates.append(date - pd.Timedelta(days=364))
+        else:
+            source_dates.append(date - pd.Timedelta(days=default_lag))
+    return pd.Series(pd.to_datetime(source_dates), index=dates.index)
+
+
+def holiday_anchor_aware_seasonal_naive(train: pd.DataFrame, target_dates: pd.Series, default_lag: int = 364) -> np.ndarray:
+    dates = pd.to_datetime(target_dates).dt.normalize()
+    source_dates = holiday_anchor_aware_source_dates(dates, default_lag)
+    lookup = train.assign(ds=pd.to_datetime(train["ds"]).dt.normalize()).set_index("ds")["y"]
+    values = source_dates.map(lookup).to_numpy(dtype=float)
+    missing = np.isnan(values)
+    if missing.any():
+        values[missing] = seasonal_naive(train, len(dates), default_lag)[missing]
+    return values
+
+
 def seasonal_values(train: pd.DataFrame, horizon: int, lag: int) -> np.ndarray | None:
     y = train["y"].to_numpy()
     if len(y) < lag:
@@ -524,6 +592,19 @@ def daily_reagg_seasonal_naive(daily_train: pd.DataFrame, weekly_dates: pd.Serie
     return reaggregate_daily_forecast(daily_train, weekly_dates, forecast, weekly_freq)
 
 
+def daily_reagg_holiday_anchor_aware(
+    daily_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    default_lag: int = 365,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    horizon_days = daily_forecast_horizon_days(daily_train, weekly_dates)
+    cutoff = pd.Timestamp(daily_train["ds"].max()).normalize()
+    daily_dates = pd.Series(pd.date_range(cutoff + pd.Timedelta(days=1), periods=horizon_days, freq="D"))
+    forecast = holiday_anchor_aware_seasonal_naive(daily_train, daily_dates, default_lag)
+    return reaggregate_daily_forecast(daily_train, weekly_dates, forecast, weekly_freq)
+
+
 def daily_reagg_level_scaled_seasonal_naive(
     daily_train: pd.DataFrame,
     weekly_dates: pd.Series,
@@ -563,6 +644,17 @@ def daily_reagg_seasonal_naive_from_full_history(
 ) -> np.ndarray:
     daily_train = daily_train_through_weekly_cutoff(daily_history, weekly_train)
     return daily_reagg_seasonal_naive(daily_train, weekly_dates, lag, weekly_freq)
+
+
+def daily_reagg_holiday_anchor_aware_from_full_history(
+    daily_history: pd.DataFrame,
+    weekly_train: pd.DataFrame,
+    weekly_dates: pd.Series,
+    default_lag: int = 365,
+    weekly_freq: str = DEFAULT_WEEKLY_FREQ,
+) -> np.ndarray:
+    daily_train = daily_train_through_weekly_cutoff(daily_history, weekly_train)
+    return daily_reagg_holiday_anchor_aware(daily_train, weekly_dates, default_lag, weekly_freq)
 
 
 def daily_reagg_level_scaled_seasonal_naive_from_full_history(

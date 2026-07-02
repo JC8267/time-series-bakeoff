@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from metrics import score_group
 from run_bakeoff import add_conformal_intervals
 from run_forecast_significance_tests import hac_standard_error, moving_block_bootstrap
-from run_interval_coverage_backtest import add_rolling_intervals
+from run_interval_coverage_backtest import add_rolling_intervals, quantiles_for_group
 
 
 def build_preds(n_cutoffs: int, horizon: int = 3) -> pd.DataFrame:
@@ -106,3 +107,49 @@ def test_rolling_segment_intervals_use_prior_cutoffs_only() -> None:
 
     first_eval = out[out["cutoff"].eq(sorted(preds["cutoff"].unique())[2])]
     np.testing.assert_allclose(first_eval["p90"] - first_eval["forecast"], 10.0)
+
+
+def test_shrunken_quantiles_blend_segment_toward_global() -> None:
+    calibration = pd.DataFrame(
+        {
+            "actual": [0.0, 0.0, 100.0, 100.0],
+            "forecast": [0.0, 0.0, 0.0, 0.0],
+            "seasonal_segment": ["rest_weeks", "rest_weeks", "holiday_weeks", "holiday_weeks"],
+        }
+    )
+
+    out = quantiles_for_group(calibration, "shrunken", "holiday_weeks", shrinkage_k=2)
+
+    global_qs = np.quantile(calibration["actual"].to_numpy(), [0.025, 0.10, 0.90, 0.975])
+    segment_qs = np.asarray([100.0, 100.0, 100.0, 100.0])
+    np.testing.assert_allclose(out, 0.5 * segment_qs + 0.5 * global_qs)
+
+
+def test_shrunken_quantiles_use_global_when_segment_missing() -> None:
+    calibration = pd.DataFrame(
+        {
+            "actual": [1.0, 2.0, 3.0],
+            "forecast": [0.0, 0.0, 0.0],
+            "seasonal_segment": ["rest_weeks", "rest_weeks", "rest_weeks"],
+        }
+    )
+
+    out = quantiles_for_group(calibration, "shrunken", "holiday_weeks", shrinkage_k=30)
+
+    np.testing.assert_allclose(out, np.quantile(calibration["actual"].to_numpy(), [0.025, 0.10, 0.90, 0.975]))
+
+
+def test_shrunken_quantiles_k_boundaries() -> None:
+    calibration = pd.DataFrame(
+        {
+            "actual": [1.0, 2.0, 10.0, 20.0],
+            "forecast": [0.0, 0.0, 0.0, 0.0],
+            "seasonal_segment": ["rest_weeks", "rest_weeks", "holiday_weeks", "holiday_weeks"],
+        }
+    )
+
+    out = quantiles_for_group(calibration, "shrunken", "holiday_weeks", shrinkage_k=0)
+
+    np.testing.assert_allclose(out, np.quantile([10.0, 20.0], [0.025, 0.10, 0.90, 0.975]))
+    with pytest.raises(ValueError, match="non-negative"):
+        quantiles_for_group(calibration, "shrunken", "holiday_weeks", shrinkage_k=-1)

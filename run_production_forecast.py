@@ -69,12 +69,28 @@ def residual_quantiles(grid_path: Path, interval_windows: int) -> dict[str, np.n
         temp["forecast"] = forecast
         temp["segment"] = seasonal_segment(temp["ds"])
         temp["residual"] = temp["actual"] - temp["forecast"]
-        model_quantiles = {"global": np.quantile(temp["residual"].to_numpy(), QUANTILE_LEVELS)}
+        model_quantiles = {"global": np.quantile(temp["residual"].to_numpy(), QUANTILE_LEVELS), "counts": {}}
         for segment, group in temp.groupby("segment"):
             model_quantiles[segment] = np.quantile(group["residual"].to_numpy(), QUANTILE_LEVELS)
+            model_quantiles["counts"][segment] = len(group)
         out[name] = model_quantiles
     out["n_windows"] = len(recent_cutoffs)
     return out
+
+
+def quantiles_for_segment(qs: dict, segment: str, interval_mode: str, shrinkage_k: float) -> np.ndarray:
+    if interval_mode == "segment":
+        return qs.get(segment, qs["global"])
+    if interval_mode != "shrunken":
+        return qs["global"]
+    segment_qs = qs.get(segment)
+    n_segment = qs.get("counts", {}).get(segment, 0)
+    if segment_qs is None or n_segment == 0:
+        return qs["global"]
+    if shrinkage_k < 0:
+        raise ValueError("shrinkage_k must be non-negative.")
+    weight = n_segment / (n_segment + shrinkage_k) if n_segment + shrinkage_k else 1.0
+    return weight * segment_qs + (1.0 - weight) * qs["global"]
 
 
 def build_horizon_rows(
@@ -85,6 +101,7 @@ def build_horizon_rows(
     qs: dict,
     training_cutoff: pd.Timestamp,
     interval_mode: str = "global",
+    shrinkage_k: float = 30.0,
 ) -> list[dict]:
     """Production rows always; challenger rows only when a TimesFM forecast exists.
 
@@ -100,6 +117,7 @@ def build_horizon_rows(
         training_cutoff,
         interval_note,
         interval_mode,
+        shrinkage_k,
     )
     if tfm is not None and "blend" in qs:
         blend = BLEND_NAIVE_WEIGHT * naive + (1 - BLEND_NAIVE_WEIGHT) * tfm
@@ -112,6 +130,7 @@ def build_horizon_rows(
                 training_cutoff,
                 interval_note,
                 interval_mode,
+                shrinkage_k,
             )
         )
     return rows
@@ -125,6 +144,7 @@ def forecast_rows(
     training_cutoff: pd.Timestamp,
     interval_note: str,
     interval_mode: str = "global",
+    shrinkage_k: float = 30.0,
 ) -> list[dict]:
     rows = []
     segments = seasonal_segment(dates)
@@ -132,10 +152,12 @@ def forecast_rows(
         q_values = qs
         note = interval_note
         if isinstance(qs, dict):
-            q_values = qs.get(segment, qs["global"]) if interval_mode == "segment" else qs["global"]
+            q_values = quantiles_for_segment(qs, segment, interval_mode, shrinkage_k)
             note = f"{interval_note}_{interval_mode}"
             if interval_mode == "segment":
                 note = f"{note}_{segment}"
+            if interval_mode == "shrunken":
+                note = f"{note}_k{shrinkage_k:g}_{segment}"
         rows.append(
             {
                 "unique_id": "total_sales",
@@ -160,7 +182,8 @@ def main() -> None:
     parser.add_argument("--sales-csv", default="daily_sales_data.csv")
     parser.add_argument("--horizons", default="28,91,180,365")
     parser.add_argument("--interval-windows", type=int, default=8, help="Most recent multifold grid cutoffs used for residual quantiles.")
-    parser.add_argument("--interval-mode", choices=["global", "segment"], default="global")
+    parser.add_argument("--interval-mode", choices=["global", "segment", "shrunken"], default="global")
+    parser.add_argument("--shrinkage-k", type=float, default=30.0)
     parser.add_argument("--timesfm-context", type=int, default=1024)
     parser.add_argument("--opening-info", default="opening_info.csv", help="Used only to flag planned openings inside forecast windows; no uplift is applied.")
     parser.add_argument("--output-dir", default="outputs_production_forecast")
@@ -204,7 +227,7 @@ def main() -> None:
             except Exception as exc:
                 challenger_skipped_reason = f"TimesFM forecast failed at horizon {horizon}: {type(exc).__name__}: {exc}"
                 print(f"WARNING [production]: {challenger_skipped_reason}.", flush=True)
-        rows.extend(build_horizon_rows(naive, tfm, horizon, dates, qs, training_cutoff, args.interval_mode))
+        rows.extend(build_horizon_rows(naive, tfm, horizon, dates, qs, training_cutoff, args.interval_mode, args.shrinkage_k))
 
     out = pd.DataFrame(rows)
     output_dir = Path(args.output_dir)
@@ -232,6 +255,7 @@ def main() -> None:
         "blend_naive_weight": BLEND_NAIVE_WEIGHT,
         "interval_windows": args.interval_windows,
         "interval_mode": args.interval_mode,
+        "shrinkage_k": args.shrinkage_k if args.interval_mode == "shrunken" else None,
         "interval_sources": interval_meta,
         "challenger_included": challenger_skipped_reason is None,
         "challenger_skipped_reason": challenger_skipped_reason,

@@ -1,6 +1,6 @@
 # Forecasting and Counterfactual Model Usage Plan
 
-Last updated: 2026-06-25
+Last updated: 2026-07-02
 
 This document describes which validated models and ensembles to use for different project types, and how to implement each workflow with the current bakeoff pipeline.
 
@@ -51,6 +51,10 @@ Latest rerun artifacts:
 | Overlap-aware significance tests | `outputs_forecast_significance_tests` |
 | Interval coverage backtest | `outputs_interval_coverage_backtest` |
 | Weekly production package | `outputs_weekly_production_forecast` |
+| Holiday-anchor validation | `outputs_multifold_*d_holiday_anchor_pool`, `outputs_weekly_multifold_*w_holiday_anchor_pool`, `outputs_forecast_significance_tests_holiday_anchor` |
+| Interval shrinkage sweeps | `outputs_interval_coverage_backtest_shrunken_k10`, `outputs_interval_coverage_backtest_shrunken_k30`, `outputs_interval_coverage_backtest_shrunken_k60`, `outputs_interval_coverage_backtest_global_w16`, `outputs_interval_coverage_backtest_global_all` |
+| Residual covariate harness | `outputs_residual_covariate_model`, `outputs_forecast_significance_tests_residual_covariates` |
+| Forecast monitor | `outputs_forecast_monitor` |
 
 Artifact notes:
 
@@ -95,6 +99,14 @@ Interval coverage backtest added 2026-06-25:
 - `run_interval_coverage_backtest.py` emulates production residual-quantile intervals using only prior cutoffs. Daily and weekly production scripts now support `--interval-mode global|segment`; default is `global` because global intervals had better overall coverage in backtest.
 - Daily global interval coverage for `seasonal_naive_lag_364`: 80% coverage ranged 0.759-0.805 and 95% coverage ranged 0.941-0.962 across 28/91/180/365d. Segment conditioning improved daily holiday coverage at 180d (80% 0.654 -> 0.784; 95% 0.864 -> 0.941) but narrowed bands and reduced total 80% coverage at shorter horizons.
 - Weekly global interval coverage for `daily_reagg_seasonal_naive_lag_365`: 80% coverage ranged 0.680-0.771 and 95% coverage ranged 0.880-0.959 across 4/12/26/52w. Segment conditioning badly undercovered 4w holiday rows (95% 0.471), so keep global weekly intervals as the default and use segment coverage as a diagnostic.
+
+2026-07-02 validation updates:
+
+- Holiday-anchor-aware seasonal naive is rejected. Daily 180d was directionally better (mean WAPE diff -0.0024) but not significant (HAC p=0.409; block CI crossed zero); 28d/91d/365d lost. Weekly holiday-anchor reaggregation lost to `daily_reagg_seasonal_naive_lag_365` at all four horizons, with mean WAPE losses of about +0.0022 to +0.0025. Segment summaries show holiday-week gains offset by larger rest-week degradation.
+- Interval `shrunken` mode is implemented for backtests and production packagers, but not adopted as default. k=10/30/60 did not meet weekly coverage gates, and wider global calibration windows reduced 80% weekly coverage. Keep `--interval-mode global --interval-windows 8`.
+- `run_weekly_production_forecast.py` now emits `challenger_26w_pool_median_trend_seasonal` with intervals. Track it; do not promote until future realized monitor windows support it.
+- `run_forecast_monitor.py` appends relative-only realized WAPE, bias pct, interval coverage, final-vs-challenger verdicts, and CUSUM alarm state. The current local sales file ends at 2026-04-01, so the 2026-04-01-cutoff forecast package has no realized future rows yet.
+- `run_residual_covariate_model.py` scored `residual_ridge_f1` and `residual_ridge_f1f2` across all daily and weekly horizons. Both are rejected: every mean WAPE diff versus the champion was positive, from +0.041 at daily 28d for F1F2 to +0.143 at weekly 52w for F1F2. The harness remains useful for future known-ahead promo covariates.
 
 Weekly-grain validation added 2026-06-24 and extended 2026-06-25:
 
@@ -225,9 +237,10 @@ Primary weekly output: `outputs_weekly_production_forecast/weekly_production_for
 ```text
 final_<h>w_daily_reagg_seasonal_naive_lag_365
 benchmark_<h>w_seasonal_naive_lag_52
+challenger_26w_pool_median_trend_seasonal       (26w only)
 ```
 
-Intervals are residual quantiles from the daily-reaggregation weekly grid. Default interval mode is `global`; `--interval-mode segment` is available for holiday/rest diagnostics but is not the default because the backtest undercovered short weekly holiday windows.
+Intervals are residual quantiles from the daily-reaggregation weekly grid. Default interval mode is `global`; `--interval-mode segment` and `--interval-mode shrunken` are available for diagnostics but are not defaults because neither met the weekly coverage gates.
 
 Intervals are residual quantiles from each rule's own recent multifold grid windows; the manifest records the grid and window count per horizon. Requires the matching `outputs_multifold_<h>d_validation/` grid (run `run_multifold_final_validation.py` first for a new horizon or after a data refresh).
 
@@ -397,6 +410,15 @@ Recommended cadence:
 | Re-run 28/91 validation | Monthly or after major business changes. |
 | Re-run 180/365 validation | Quarterly or when long-range planning is needed. |
 | Re-check counterfactual calibration | Before each major incrementality readout. |
+
+Monitor realized production packages after each data refresh:
+
+```powershell
+python run_forecast_monitor.py `
+  --forecast-csv outputs_production_forecast/production_forecast.csv `
+  --sales-csv daily_sales_data.csv `
+  --log-csv outputs_forecast_monitor/monitoring_log.csv
+```
 
 ## Implementation Commands
 

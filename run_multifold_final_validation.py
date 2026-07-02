@@ -33,6 +33,7 @@ from run_bakeoff import (
     SEED,
     WEEKLY_GRAIN,
     annual_lag_for_grain,
+    daily_reagg_holiday_anchor_aware_from_full_history,
     daily_reagg_level_scaled_seasonal_naive_from_full_history,
     daily_reagg_seasonal_average_from_full_history,
     daily_reagg_seasonal_naive_from_full_history,
@@ -46,6 +47,7 @@ from run_bakeoff import (
     normalize_grain,
     predict_sklearn_recursive,
     reaggregate_daily_forecast,
+    holiday_anchor_aware_seasonal_naive,
     seasonal_naive,
     set_seeds,
     statsforecast_forecast,
@@ -119,7 +121,23 @@ def make_predictors(
     grain = normalize_grain(grain)
     predictors = {}
     for name in pool:
-        if name.startswith("seasonal_naive_lag_"):
+        if name == "seasonal_naive_holiday_anchor_aware":
+            if grain != DAILY_GRAIN:
+                raise ValueError(f"{name} is only valid with --grain daily.")
+            predictors[name] = lambda train, h: holiday_anchor_aware_seasonal_naive(train, future_dates(train, h, grain, weekly_freq), default_lag=364)
+        elif name == "daily_reagg_seasonal_naive_holiday_anchor_aware":
+            if grain != WEEKLY_GRAIN:
+                raise ValueError(f"{name} is only valid with --grain weekly.")
+            if daily_history is None:
+                raise ValueError(f"{name} requires daily history.")
+            predictors[name] = lambda train, h, daily=daily_history: daily_reagg_holiday_anchor_aware_from_full_history(
+                daily,
+                train,
+                future_dates(train, h, grain, weekly_freq),
+                default_lag=365,
+                weekly_freq=weekly_freq,
+            )
+        elif name.startswith("seasonal_naive_lag_"):
             lag = int(name.rsplit("_", 1)[1])
             predictors[name] = lambda train, h, lag=lag: seasonal_naive(train, h, lag)
         elif name.startswith("daily_reagg_scaled_seasonal_naive_lag_"):

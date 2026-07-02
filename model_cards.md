@@ -1,6 +1,6 @@
 # Production Model Cards
 
-Last updated: 2026-06-25
+Last updated: 2026-07-02
 
 Validation fold note: every WAPE/bias claim below should be read with its fold count. The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon, phase 3 trained stack weights on the earlier aligned cutoff and evaluated on 2 held-out cutoffs, and phase 5 used 1 final holdout. The latest 180/365 validation used 3 rolling cutoffs per horizon. Fewer-fold sensitivity tests can make `seasonal_naive_lag_364` win; treat those as sensitivity checks unless the ensemble candidates are rebuilt and scored on the same folds.
 
@@ -11,6 +11,12 @@ Validation fold note: every WAPE/bias claim below should be read with its fold c
 2026-06-25 seasonal trend/averaging update: level-scaled seasonal naive and recency-weighted multi-year seasonal averages were added at both daily and weekly grains (`outputs_multifold_*d_trend_seasonal_pool`, `outputs_weekly_multifold_*w_trend_seasonal_pool`). Standalone scaled/multi-year rules did not beat the existing daily or weekly champions. Overlap-aware significance tests on extended nested windows (`outputs_forecast_significance_tests`) found the daily 180d inverse-WAPE stack directionally better but not statistically confirmed (mean WAPE diff -0.00536, HAC p=0.147, block CI crosses zero). Weekly 26w `pool_median` has a small but statistically cleaner edge over `daily_reagg_seasonal_naive_lag_365` (mean diff -0.00140, HAC p=0.017), so track it as the 26w challenger; keep lag-365 as the general weekly default until the 26w challenger is packaged and holds up after refresh.
 
 2026-06-25 interval coverage update: `run_interval_coverage_backtest.py` measured rolling, prior-cutoff-only residual-quantile coverage. Daily and weekly production scripts now support `--interval-mode global|segment`. Default remains `global`: segment conditioning helped some daily holiday slices but reduced overall coverage and badly undercovered short weekly holiday rows.
+
+2026-07-02 update: holiday-anchor-aware daily seasonal naive was pre-registered and tested (`outputs_multifold_*d_holiday_anchor_pool`, `outputs_weekly_multifold_*w_holiday_anchor_pool`, `outputs_forecast_significance_tests_holiday_anchor`). It is rejected. Daily results: +0.0010 WAPE at 28d, +0.0015 at 91d, -0.0024 at 180d with HAC p=0.409 and block CI crossing zero, and +0.0012 on the single feasible 365d fold. Weekly results versus `daily_reagg_seasonal_naive_lag_365`: +0.0025 at 4w, +0.0025 at 12w, +0.0022 at 26w, and +0.0024 at 52w. Segment summaries confirm the mechanism improved holiday weeks but degraded rest weeks enough to lose overall. Do not tune the windows.
+
+2026-07-02 interval update: `shrunken` interval mode was added to the backtest and production packagers, with shrinkage k tested at 10/30/60 (`outputs_interval_coverage_backtest_shrunken_k*`). It is not the default. None of the shrunken settings met the weekly 4w/12w coverage floor; increasing global calibration windows to 16 or all available also reduced weekly 80% coverage. Keep `global` with 8 windows as the production default pending a better interval design.
+
+2026-07-02 monitoring/covariate update: `run_forecast_monitor.py` now appends relative-only realized WAPE, bias pct, coverage, CUSUM alarm state, and final-vs-challenger verdicts. The weekly production package now emits `challenger_26w_pool_median_trend_seasonal` with intervals. `run_residual_covariate_model.py` scored `residual_ridge_f1` and `residual_ridge_f1f2` at all daily and weekly horizons (`outputs_residual_covariate_model`, `outputs_forecast_significance_tests_residual_covariates`); both lose badly everywhere, so no covariate residual model is promoted.
 
 ## `weekly_daily_reagg_seasonal_naive_lag_365`
 
@@ -36,7 +42,8 @@ Notes:
 - The main lift is holiday allocation: at 4 weeks the 2025-12-03 fold improved from 0.1048 WAPE for native weekly seasonal naive to 0.0496.
 - In the lag-365 foundation pool, no ensemble beat standalone lag-365 at any horizon. The closest rows were `nested_inverse_wape_stack` at 4 weeks, `pool_median` at 12/26/52 weeks; all had higher mean WAPE than lag-365.
 - In the seasonal trend/averaging pool, `pool_median` beat lag-365 at 26w and 52w but not at 4w/12w. The 26w edge survived an overlap-aware test; the 52w read remains too small to trust.
-- Weekly production output is packaged by `run_weekly_production_forecast.py` in `outputs_weekly_production_forecast/weekly_production_forecast.csv`, with global residual-quantile intervals by default and optional holiday/rest segment intervals for diagnostics.
+- Weekly production output is packaged by `run_weekly_production_forecast.py` in `outputs_weekly_production_forecast/weekly_production_forecast.csv`, with global residual-quantile intervals by default and optional holiday/rest segment or shrunken intervals for diagnostics.
+- The package now includes `challenger_26w_pool_median_trend_seasonal` only at 26w so monitor refreshes can adjudicate the statistically cleaner long-weekly challenger out of exploration.
 - The 26- and 52-week evidence is still data-limited because the final folds are heavily overlapping.
 
 Latest validation:
@@ -47,7 +54,7 @@ Latest validation:
 - 52 weeks: mean WAPE 0.0347 vs 0.0389; mean bias 0.0000; 2/2 wins, effectively one annual read.
 - Best lag-365-included ensemble WAPE: 0.0492 at 4w, 0.0523 at 12w, 0.0401 at 26w, and 0.0378 at 52w. These do not beat standalone lag-365.
 
-Production read: use `daily_reagg_seasonal_naive_lag_365` as the weekly-grain default for 4/12/26/52 weeks. Track the 26w `pool_median` seasonal-trend challenger, but do not replace the packaged default until it is emitted as a named production row with intervals and survives a refresh.
+Production read: use `daily_reagg_seasonal_naive_lag_365` as the weekly-grain default for 4/12/26/52 weeks. Track the packaged 26w `pool_median` seasonal-trend challenger, but do not replace the default until it survives a refresh.
 
 ## `weekly_seasonal_naive_lag_52`
 
