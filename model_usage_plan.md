@@ -1,6 +1,6 @@
 # Forecasting and Counterfactual Model Usage Plan
 
-Last updated: 2026-07-02
+Last updated: 2026-07-09
 
 This document describes which validated models and ensembles to use for different project types, and how to implement each workflow with the current bakeoff pipeline.
 
@@ -55,6 +55,7 @@ Latest rerun artifacts:
 | Interval shrinkage sweeps | `outputs_interval_coverage_backtest_shrunken_k10`, `outputs_interval_coverage_backtest_shrunken_k30`, `outputs_interval_coverage_backtest_shrunken_k60`, `outputs_interval_coverage_backtest_global_w16`, `outputs_interval_coverage_backtest_global_all` |
 | Residual covariate harness | `outputs_residual_covariate_model`, `outputs_forecast_significance_tests_residual_covariates` |
 | Forecast monitor | `outputs_forecast_monitor` |
+| Rejected daily lag-364/lag-365 calendar blend | `outputs_multifold_*d_calendar_blend_pool`, `outputs_forecast_significance_tests_calendar_blend` |
 
 Artifact notes:
 
@@ -108,6 +109,11 @@ Interval coverage backtest added 2026-06-25:
 - `run_forecast_monitor.py` appends relative-only realized WAPE, bias pct, interval coverage, final-vs-challenger verdicts, and CUSUM alarm state. The current local sales file ends at 2026-04-01, so the 2026-04-01-cutoff forecast package has no realized future rows yet.
 - `run_residual_covariate_model.py` scored `residual_ridge_f1` and `residual_ridge_f1f2` across all daily and weekly horizons. Both are rejected: every mean WAPE diff versus the champion was positive, from +0.041 at daily 28d for F1F2 to +0.143 at weekly 52w for F1F2. The harness remains useful for future known-ahead promo covariates.
 
+2026-07-09 validation and data-quality updates:
+
+- A pre-registered fixed 50/50 daily blend of `seasonal_naive_lag_364` and `seasonal_naive_lag_365` was rejected. In the exact two-member pool, `pool_median` won 0/14 extended windows at 28/91/180 days and 0/1 at 365 days; mean WAPE losses versus lag 364 were +0.0720/+0.0685/+0.0620/+0.0719. Daily lag 365 shifts the weekday pattern, so retain it only inside the validated daily-to-weekly reaggregation workflow.
+- `run_multifold_final_validation.py` now exposes `--missing-date-strategy`, writes `missing_sales_dates_audit.csv` when needed, and records the strategy, filled-day count, and an explicit unweighted-metrics warning in its manifest and run summary. Current retained validations had no filled dates.
+
 Weekly-grain validation added 2026-06-24 and extended 2026-06-25:
 
 - Grain: complete `W-WED` weeks aggregated from `daily_sales_data.csv`; 221 weekly rows from 2022-01-12 through 2026-04-01.
@@ -157,7 +163,7 @@ Fold-count caveat:
 - The latest 180/365 validation used 3 rolling cutoffs per horizon. This is intentionally underpowered.
 - Tests with fewer folds can flip the apparent winner back to `seasonal_naive_lag_364`. Do not compare a naive-only, fewer-fold run against an ensemble run unless the ensemble is rebuilt and scored on the same folds.
 - When fold count is reduced, report the result as a sensitivity check rather than a replacement recommendation unless phase 3/phase 5 are rerun under the same fold design.
-- Weekly `data_gap_filled_flag` is summed into weekly rows but not consumed by model scoring or weighting. Current weekly runs had `missing_days_filled = 0`; if future weekly data has interpolated days, add an explicit quality note or down-weight those weeks before treating the metrics as comparable.
+- Weekly `data_gap_filled_flag` is summed into weekly rows but not consumed by model scoring or weighting. Multi-fold manifests and summaries now disclose the fill strategy and count and warn that affected rows are unweighted. Current weekly runs had `missing_days_filled = 0`; if a future run fills dates, inspect its audit and treat the metrics as sensitivity evidence unless those weeks are down-weighted.
 
 Model additions in the latest rerun:
 
@@ -619,3 +625,4 @@ Suggested table:
 8. Done (2026-06-10): multi-fold nested validation at 28 days (6 non-overlapping folds, run_id `20260610T044622Z`); seasonal naive won 4 of 6 folds and is now the 28-day production recommendation, with Extra Trees retained as the opening-aware scenario model.
 9. Done (2026-06-10): multi-fold nested validation at 180 days (5 folds, run_id `20260610T112337Z`) and 365 days (1 feasible fold, run_id `20260610T113121Z`); seasonal naive won everywhere and the long-horizon stacks were demoted to sensitivity comparators. Their earlier focused-run wins traced to weight-fitting windows overlapping the eval windows by ~5 and ~11 months.
 10. Done (2026-06-10): `opening_info.csv` grew from 4 to 10 openings (2 with fully observed ramps, 3 planned after the current data end). The 28/91-day multifold runs were rerun with the new file (run_ids `20260610T124426Z`/`20260610T124857Z`): no verdict changed, and richer opening features slightly worsened the opening-aware ML models. The aggregate event study found per-unit lift unidentifiable (see the warning in section 4). The production forecast manifest now lists planned openings inside each forecast window as an explicit unquantified caveat.
+11. Done (2026-07-09): multi-fold validation now audits and discloses missing-date filling. A fixed daily lag-364/lag-365 calendar blend was also tested and rejected at every horizon; no production model changed.

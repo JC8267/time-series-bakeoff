@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from run_bakeoff import load_sales
+from run_multifold_final_validation import missing_data_quality_note
 
 
 def test_load_sales_writes_missing_date_audit(tmp_path) -> None:
@@ -51,3 +52,13 @@ def test_load_sales_weekly_grain_aggregates_complete_weeks(tmp_path) -> None:
     assert out["ds"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-10", "2024-01-17"]
     assert out["y"].tolist() == [7.0, 7.0]
     assert out["data_gap_filled_flag"].tolist() == [0, 0]
+
+
+def test_missing_data_quality_note_discloses_unweighted_fills() -> None:
+    assert missing_data_quality_note(0, "interpolate") == "No missing daily sales dates were filled."
+
+    note = missing_data_quality_note(2, "interpolate")
+
+    assert "2 missing daily sales date(s)" in note
+    assert "not down-weighted" in note
+    assert "missing_sales_dates_audit.csv" in note

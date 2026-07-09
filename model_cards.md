@@ -1,6 +1,6 @@
 # Production Model Cards
 
-Last updated: 2026-07-02
+Last updated: 2026-07-09
 
 Validation fold note: every WAPE/bias claim below should be read with its fold count. The latest 28/91 phase-1 and foundation reruns used 3 rolling cutoffs per horizon, phase 3 trained stack weights on the earlier aligned cutoff and evaluated on 2 held-out cutoffs, and phase 5 used 1 final holdout. The latest 180/365 validation used 3 rolling cutoffs per horizon. Fewer-fold sensitivity tests can make `seasonal_naive_lag_364` win; treat those as sensitivity checks unless the ensemble candidates are rebuilt and scored on the same folds.
 
@@ -17,6 +17,8 @@ Validation fold note: every WAPE/bias claim below should be read with its fold c
 2026-07-02 interval update: `shrunken` interval mode was added to the backtest and production packagers, with shrinkage k tested at 10/30/60 (`outputs_interval_coverage_backtest_shrunken_k*`). It is not the default. None of the shrunken settings met the weekly 4w/12w coverage floor; increasing global calibration windows to 16 or all available also reduced weekly 80% coverage. Keep `global` with 8 windows as the production default pending a better interval design.
 
 2026-07-02 monitoring/covariate update: `run_forecast_monitor.py` now appends relative-only realized WAPE, bias pct, coverage, CUSUM alarm state, and final-vs-challenger verdicts. The weekly production package now emits `challenger_26w_pool_median_trend_seasonal` with intervals. `run_residual_covariate_model.py` scored `residual_ridge_f1` and `residual_ridge_f1f2` at all daily and weekly horizons (`outputs_residual_covariate_model`, `outputs_forecast_significance_tests_residual_covariates`); both lose badly everywhere, so no covariate residual model is promoted.
+
+2026-07-09 update: a pre-registered fixed 50/50 daily lag-364/lag-365 blend was rejected. It won 0/14 extended windows at 28/91/180 days and 0/1 at 365 days, with mean WAPE losses of +0.0720/+0.0685/+0.0620/+0.0719 versus lag 364. Daily lag 365 shifts the weekday pattern; keep it only for daily-to-weekly reaggregation. Multi-fold runs now record the missing-date strategy and filled-day count and write an explicit unweighted-metrics warning plus audit path when gaps are filled.
 
 ## `weekly_daily_reagg_seasonal_naive_lag_365`
 
@@ -80,7 +82,7 @@ Notes:
 - Nested baseline, broad foundation, and standalone ML pools did not beat this benchmark robustly, but daily lag-365 reaggregation did.
 - Weekly ML pools with `sklearn_hist_gradient_boosting`, direct HistGradientBoosting, random forest, Extra Trees, ridge, and LightGBM did not beat this benchmark. Best standalone ML WAPE was 0.0560 at 4w for ridge, 0.0587 at 12w for LightGBM, 0.0684 at 26w for direct HistGradientBoosting, and 0.0597 at 52w for direct HistGradientBoosting.
 - The 12/26/52-week nested reads are overlapping: effective independent windows are about 2.33, 1.62, and 1.08 respectively. The 52-week read is data-limited and has only 2 final folds.
-- Weekly `data_gap_filled_flag` is carried through aggregation but is not used for metric weighting. These runs had no filled missing days.
+- Weekly `data_gap_filled_flag` is carried through aggregation but is not used for metric weighting. Multi-fold manifests now disclose any fills and warn that affected rows are unweighted. These runs had no filled missing days.
 
 Latest validation:
 

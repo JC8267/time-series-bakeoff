@@ -442,6 +442,15 @@ def fold_overlap_metadata(fold_cutoffs: list[pd.Timestamp], horizon: int, grid_s
     }
 
 
+def missing_data_quality_note(missing_days_filled: int, strategy: str) -> str:
+    if not missing_days_filled:
+        return "No missing daily sales dates were filled."
+    return (
+        f"WARNING: {missing_days_filled} missing daily sales date(s) were filled using {strategy}; "
+        "affected rows are not down-weighted, so inspect missing_sales_dates_audit.csv before comparing metrics."
+    )
+
+
 def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary: pd.DataFrame, fold_metadata: dict, output_dir: Path, args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     grid_preds.to_csv(output_dir / "multifold_grid_predictions.csv", index=False)
@@ -466,11 +475,13 @@ def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary:
         args.grid_step,
         args.grain,
     )
+    data_quality_note = missing_data_quality_note(args.missing_days_filled, args.missing_date_strategy)
     lines = [
         f"# Multi-Fold Nested Final Validation (horizon {args.horizon})",
         "",
         f"Created at: {datetime.now(timezone.utc).isoformat()}",
         f"Grain: {args.grain}. Frequency: {args.weekly_freq if args.grain == WEEKLY_GRAIN else 'D'}.",
+        f"Data quality: {data_quality_note}",
         f"Folds: {n_folds} rolling final-holdout windows, cutoffs stepped {args.grid_step} {'weeks' if args.grain == WEEKLY_GRAIN else 'days'}.",
         f"Adjacent holdout overlap: {overlap['adjacent_overlap_units']} {'weeks' if args.grain == WEEKLY_GRAIN else 'days'} "
         f"({overlap['adjacent_overlap_pct']:.0%}); effective independent windows ~= {overlap['effective_independent_windows_approx']:.2f}.",
@@ -522,6 +533,9 @@ def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary:
         "n_folds": n_folds,
         "grid_step": args.grid_step,
         "grid_step_unit": "weeks" if args.grain == WEEKLY_GRAIN else "days",
+        "missing_date_strategy": args.missing_date_strategy,
+        "missing_days_filled": args.missing_days_filled,
+        "data_quality_note": data_quality_note,
         "opening_info_file": args.opening_info,
         "pool": sorted(grid_preds["model_name"].unique().tolist()),
         "grid_cutoffs": [str(pd.Timestamp(c).date()) for c in sorted(grid_preds["cutoff"].unique())],
@@ -550,12 +564,14 @@ def main() -> None:
     parser.add_argument("--chronos-context", type=int, default=2048)
     parser.add_argument("--max-grid-cutoffs", type=int, default=None, help="Limit grid to the most recent N cutoffs (smoke tests).")
     parser.add_argument("--opening-info", default=None, help="Optional unit-opening CSV; required for opening-aware pool models like sklearn_extra_trees.")
+    parser.add_argument("--missing-date-strategy", choices=["interpolate", "zero", "error"], default="interpolate")
     parser.add_argument("--grain", choices=[DAILY_GRAIN, WEEKLY_GRAIN], default=DAILY_GRAIN)
     parser.add_argument("--weekly-freq", default=DEFAULT_WEEKLY_FREQ, help="Pandas weekly frequency used when --grain weekly.")
     parser.add_argument("--output-dir", default="outputs_multifold_91d_validation")
     args = parser.parse_args()
 
     set_seeds()
+    output_dir = Path(args.output_dir)
     if args.grid_step is None:
         args.grid_step = default_grid_step_for_grain(args.grain)
     if args.grid_step <= 0:
@@ -567,7 +583,16 @@ def main() -> None:
     if benchmark not in pool:
         raise ValueError(f"Pool must include the benchmark {benchmark}.")
     openings = load_openings(Path(args.opening_info)) if args.opening_info else None
-    df = load_sales(Path(args.sales_csv), grain=args.grain, weekly_freq=args.weekly_freq)
+    audit_path = output_dir / "missing_sales_dates_audit.csv"
+    audit_path.unlink(missing_ok=True)
+    df = load_sales(
+        Path(args.sales_csv),
+        fill_missing=args.missing_date_strategy,
+        audit_path=audit_path,
+        grain=args.grain,
+        weekly_freq=args.weekly_freq,
+    )
+    args.missing_days_filled = int(df.attrs.get("missing_days_filled", 0))
     grid = build_grid(df, args.horizon, args.grid_step, args.grain)
     if args.max_grid_cutoffs:
         grid = grid[-args.max_grid_cutoffs :]
@@ -575,7 +600,7 @@ def main() -> None:
     print(f"Grid: {len(grid)} cutoffs from {grid[0].date()} to {grid[-1].date()}; folds: {[str(c.date()) for c in fold_cutoffs]}", flush=True)
 
     daily_history = (
-        load_sales(Path(args.sales_csv))
+        load_sales(Path(args.sales_csv), fill_missing=args.missing_date_strategy)
         if args.grain == WEEKLY_GRAIN and any(name.startswith("daily_reagg_") for name in pool)
         else None
     )
@@ -591,12 +616,11 @@ def main() -> None:
     )
     grid_preds = run_grid(df, grid, args.horizon, predictors, args.grain)
     # Persist the expensive grid immediately so a fold-stage failure cannot lose it.
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     grid_preds.to_csv(output_dir / "multifold_grid_predictions.csv", index=False)
     fold_metrics, fold_metadata = run_folds(grid_preds, pool, fold_cutoffs, args.horizon, args.grain, benchmark)
     summary = summarize(fold_metrics)
-    write_outputs(grid_preds, fold_metrics, summary, fold_metadata, Path(args.output_dir), args)
+    write_outputs(grid_preds, fold_metrics, summary, fold_metadata, output_dir, args)
     print(summary.to_string(index=False))
 
     if DEGRADED_MODELS:

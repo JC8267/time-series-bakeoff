@@ -416,3 +416,16 @@ Record candidates and their exact definitions BEFORE scoring; append verdicts af
   `residual_ridge_f1f2` (+ opening structure) as defined in WS4. Verdict:
   rejected. Every daily and weekly horizon had positive WAPE deltas versus the
   current champion; the harness remains for future known-ahead promo covariates.
+- 2026-07-09: `pool_median` from the exact two-member daily pool
+  `seasonal_naive_lag_364,seasonal_naive_lag_365`. With two members this is a
+  fixed 50/50 arithmetic blend, pre-registered to hedge weekday alignment
+  (lag 364) against calendar-date alignment (lag 365) without fitted weights.
+  Score 28/91/180 days on the same 14-window extended design used for the
+  holiday-anchor experiment and 365 days on its single feasible nested fold.
+  Promotion gate: HAC p < 0.05 and block-bootstrap 95% CI below zero at at least
+  one horizon, with no mean WAPE loss greater than +0.002 at another horizon.
+  Verdict: rejected. It won 0/14 windows at 28/91/180 days and 0/1 at 365 days;
+  mean WAPE losses were +0.0720/+0.0685/+0.0620/+0.0719 respectively. Daily
+  lag 365 shifts the weekday pattern, and equal blending preserves too much of
+  that error. Keep lag 365 only for the validated daily-to-weekly reaggregation
+  workflow; do not add this blend to production.
