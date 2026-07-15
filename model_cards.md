@@ -20,6 +20,8 @@ Validation fold note: every WAPE/bias claim below should be read with its fold c
 
 2026-07-09 update: a pre-registered fixed 50/50 daily lag-364/lag-365 blend was rejected. It won 0/14 extended windows at 28/91/180 days and 0/1 at 365 days, with mean WAPE losses of +0.0720/+0.0685/+0.0620/+0.0719 versus lag 364. Daily lag 365 shifts the weekday pattern; keep it only for daily-to-weekly reaggregation. Multi-fold runs now record the missing-date strategy and filled-day count and write an explicit unweighted-metrics warning plus audit path when gaps are filled.
 
+2026-07-15 offer-level update: at a 123-day daily horizon, the pre-registered fixed 0.75 `seasonal_naive_lag_364` / 0.25 TimesFM blend beat seasonal naive on all 5 rolling folds for the Total series (mean WAPE 0.0700 vs 0.0750) and improved the untouched 2026-05-01 through 2026-07-14 Total holdout (WAPE 0.0771 vs 0.0785). This is offer-specific supporting evidence, not a project-wide promotion: consecutive folds overlap by 95 of 123 days, leaving only about 1.14 effective independent windows. The weekly offer test did not transfer; daily-reaggregated lag-365 remained the coherent weekly winner.
+
 ## `weekly_daily_reagg_seasonal_naive_lag_365`
 
 Purpose: weekly-grain total-sales production forecast.
