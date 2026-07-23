@@ -1,6 +1,6 @@
 # Forecasting and Counterfactual Model Usage Plan
 
-Last updated: 2026-07-09
+Last updated: 2026-07-23
 
 This document describes which validated models and ensembles to use for different project types, and how to implement each workflow with the current bakeoff pipeline.
 
@@ -171,8 +171,8 @@ Model additions in the latest rerun:
 - Chronos-Bolt small as a second foundation model beside TimesFM.
 - Statsmodels `ExponentialSmoothing` and `SARIMAX` now run without fallback in the latest Statsmodels-fixed rerun. They did not improve the 28-day or 91-day production winners.
 - Phase 4 was rerun with standalone `timesfm_2_5` included in interval calibration. Corrected 91-day standalone TimesFM coverage is 0.857 at the 80% level and 0.945 at the 95% level; the 91-day production stack coverage remains 0.857 at 80% and 0.956 at 95%.
-- TimesFM loader fallback for the current `huggingface-hub` behavior that forwards `proxies` into the TimesFM constructor.
-- Direct dependency pins for `huggingface-hub==0.35.3` and `httpx==0.27.2` to keep TimesFM and Chronos loading in the project venv.
+- TimesFM is pinned to package `2.0.2`, which fixes short-horizon axis slicing and Hugging Face loading from the `2.0.0` package. The loader explicitly disables its newly effective `torch.compile` path so request startup latency remains predictable.
+- Direct dependency pins for `timesfm==2.0.2`, `huggingface-hub==0.35.3`, and `httpx==0.27.2` keep TimesFM and Chronos loading reproducible in the project venv.
 
 ## Market-Level (Trade-Area) Forecasting
 
@@ -219,15 +219,38 @@ Implementation (primary, all horizons):
 ```powershell
 python run_production_forecast.py `
   --sales-csv daily_sales_data.csv `
+  --horizons 28,45,91,180,365 `
   --output-dir outputs_production_forecast
 ```
 
-Primary output: `outputs_production_forecast/production_forecast.csv` with rows:
+`--horizons` accepts unique daily horizons from 1 through 365. The seasonal-naive point path is computed once through the largest request and sliced. Primary output `outputs_production_forecast/production_forecast.csv` contains only:
 
 ```text
 final_<h>d_seasonal_naive_production       (production forecast)
-challenger_<h>d_blend_snl75_tfm25          (pre-registered challenger, tracked not shipped)
 ```
+
+Rows include `run_id`, `forecast_origin`, `grain`, `horizon`, and `horizon_step`. Intermediate horizons use the first `h` steps of the smallest covering validation grid: 1-28 uses 28d, 29-91 uses 91d, 92-180 uses 180d, and 181-365 uses 365d unless an exact custom-horizon grid exists.
+
+For a recurring custom horizon, run the full candidate pool and nested ensembles offline. `--reuse-cache` skips the run only when the manifest, artifacts, inputs, code fingerprints, modeling-package versions, and parameters still match:
+
+```powershell
+python run_multifold_final_validation.py `
+  --sales-csv daily_sales_data.csv `
+  --horizon 45 `
+  --reuse-cache
+```
+
+After an exact grid exists, optionally package the pre-registered TimesFM blend beside the final rows in a separate diagnostic artifact:
+
+```powershell
+python run_production_forecast.py `
+  --sales-csv daily_sales_data.csv `
+  --horizons 45 `
+  --include-challenger `
+  --output-dir outputs_production_forecast_45d
+```
+
+This keeps `production_forecast.csv` final-only and writes `diagnostic_forecast.csv` with both final and challenger rows. A challenger is skipped when the requested horizon lacks an exact, non-degraded TimesFM validation grid.
 
 Weekly implementation:
 
@@ -248,7 +271,7 @@ challenger_26w_pool_median_trend_seasonal       (26w only)
 
 Intervals are residual quantiles from the daily-reaggregation weekly grid. Default interval mode is `global`; `--interval-mode segment` and `--interval-mode shrunken` are available for diagnostics but are not defaults because neither met the weekly coverage gates.
 
-Intervals are residual quantiles from each rule's own recent multifold grid windows; the manifest records the grid and window count per horizon. Requires the matching `outputs_multifold_<h>d_validation/` grid (run `run_multifold_final_validation.py` first for a new horizon or after a data refresh).
+Intervals are residual quantiles from each rule's own recent multifold grid windows. The manifest records the requested horizon, source-grid horizon, grid path, row count, and window count. Full-pool custom-horizon validation defaults to `outputs_multifold_<h>d_validation/`.
 
 The phase-6 package (`run_phase6.py`, see Implementation Commands below) remains available for the legacy stack/ML artifacts; after the 2026-06-10 multi-fold validations its winner-aligned rows are sensitivity comparisons, not production.
 
@@ -425,6 +448,8 @@ python run_forecast_monitor.py `
   --sales-csv daily_sales_data.csv `
   --log-csv outputs_forecast_monitor/monitoring_log.csv
 ```
+
+The monitor uses explicit row horizon/grain metadata and manifest-provided interval grids when available. Legacy forecast files still fall back to model-name parsing and the original 28/91/180/365 or 4/12/26/52 buckets.
 
 ## Implementation Commands
 
