@@ -14,10 +14,12 @@ stay in the prediction CSVs under the gitignored output directory.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version as distribution_version
 from pathlib import Path
 
 import numpy as np
@@ -73,6 +75,92 @@ WEEKLY_DEFAULT_POOL = [
     "statsforecast_mstl_auto_ets",
 ]
 MIN_INNER_CUTOFFS = 3
+CACHE_ARTIFACTS = [
+    "manifest.json",
+    "multifold_grid_predictions.csv",
+    "multifold_fold_metrics.csv",
+    "multifold_summary.csv",
+    "multifold_fold_weights.json",
+]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def default_output_dir(horizon: int, grain: str) -> Path:
+    if normalize_grain(grain) == WEEKLY_GRAIN:
+        return Path(f"outputs_weekly_multifold_{horizon}w_validation")
+    return Path(f"outputs_multifold_{horizon}d_validation")
+
+
+def validation_package_versions(pool: list[str]) -> dict[str, str | None]:
+    packages = {"numpy", "pandas"}
+    if "timesfm_2_5" in pool:
+        packages.update({"huggingface-hub", "timesfm", "torch"})
+    if any(name in pool for name in ("chronos_bolt_small", "chronos2", "daily_reagg_chronos2")):
+        packages.update({"chronos-forecasting", "huggingface-hub", "torch"})
+    if any(name.startswith("statsforecast_") for name in pool):
+        packages.add("statsforecast")
+    if "statsmodels_ets_weekly" in pool:
+        packages.add("statsmodels")
+    if "sklearn_extra_trees" in pool:
+        packages.add("scikit-learn")
+
+    versions = {}
+    for package in sorted(packages):
+        try:
+            versions[package] = distribution_version(package)
+        except PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
+def validation_cache_signature(args: argparse.Namespace, pool: list[str]) -> dict:
+    sales_path = Path(args.sales_csv).resolve()
+    opening_path = Path(args.opening_info).resolve() if args.opening_info else None
+    source_dir = Path(__file__).resolve().parent
+    code_paths = [
+        Path(__file__).resolve(),
+        Path(run_bakeoff.__file__).resolve(),
+        source_dir / "run_phase3.py",
+        source_dir / "requirements.txt",
+    ]
+    if any(name in pool for name in ("timesfm_2_5", "chronos_bolt_small", "chronos2", "daily_reagg_chronos2")):
+        code_paths.append(source_dir / "run_prophet_timesfm_benchmark.py")
+    return {
+        "version": 2,
+        "horizon": args.horizon,
+        "grain": args.grain,
+        "weekly_freq": args.weekly_freq,
+        "n_folds": args.n_folds,
+        "grid_step": args.grid_step,
+        "max_grid_cutoffs": args.max_grid_cutoffs,
+        "pool": pool,
+        "timesfm_context": args.timesfm_context,
+        "chronos_context": args.chronos_context,
+        "missing_date_strategy": args.missing_date_strategy,
+        "sales_csv": str(sales_path),
+        "sales_sha256": sha256_file(sales_path),
+        "opening_info": str(opening_path) if opening_path else None,
+        "opening_info_sha256": sha256_file(opening_path) if opening_path else None,
+        "code_sha256": {path.name: sha256_file(path) for path in code_paths},
+        "package_versions": validation_package_versions(pool),
+    }
+
+
+def validation_cache_is_valid(output_dir: Path, signature: dict) -> bool:
+    if not all((output_dir / name).exists() for name in CACHE_ARTIFACTS):
+        return False
+    try:
+        manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return manifest.get("cache_signature") == signature
 
 
 def default_grid_step_for_grain(grain: str) -> int:
@@ -480,6 +568,7 @@ def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary:
         f"# Multi-Fold Nested Final Validation (horizon {args.horizon})",
         "",
         f"Created at: {datetime.now(timezone.utc).isoformat()}",
+        f"Run mode: {args.run_mode}.",
         f"Grain: {args.grain}. Frequency: {args.weekly_freq if args.grain == WEEKLY_GRAIN else 'D'}.",
         f"Data quality: {data_quality_note}",
         f"Folds: {n_folds} rolling final-holdout windows, cutoffs stepped {args.grid_step} {'weeks' if args.grain == WEEKLY_GRAIN else 'days'}.",
@@ -527,9 +616,11 @@ def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary:
     manifest = {
         "run_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "run_mode": args.run_mode,
         "horizon": args.horizon,
         "grain": args.grain,
         "freq": args.weekly_freq if args.grain == WEEKLY_GRAIN else "D",
+        "training_cutoff": str(args.training_cutoff.date()),
         "n_folds": n_folds,
         "grid_step": args.grid_step,
         "grid_step_unit": "weeks" if args.grain == WEEKLY_GRAIN else "days",
@@ -544,6 +635,7 @@ def write_outputs(grid_preds: pd.DataFrame, fold_metrics: pd.DataFrame, summary:
         "horizons": [args.horizon],
         "models": sorted(fold_metrics["model_name"].unique().tolist()),
         "fold_overlap": overlap,
+        "cache_signature": args.cache_signature,
         "segment_metrics": "multifold_segment_summary.csv" if args.grain == WEEKLY_GRAIN else None,
         "segment_definition": "weekly W-WED rows with week-ending month in Nov/Dec are holiday_weeks; all others rest_weeks"
         if args.grain == WEEKLY_GRAIN
@@ -559,7 +651,7 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=91)
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--grid-step", type=int, default=None)
-    parser.add_argument("--pool", default=None, help="Comma-separated candidate models; must include the seasonal naive benchmark.")
+    parser.add_argument("--pool", default=None, help="Comma-separated custom pool. Omit to run the full offline candidate pool and ensembles.")
     parser.add_argument("--timesfm-context", type=int, default=1024)
     parser.add_argument("--chronos-context", type=int, default=2048)
     parser.add_argument("--max-grid-cutoffs", type=int, default=None, help="Limit grid to the most recent N cutoffs (smoke tests).")
@@ -567,11 +659,11 @@ def main() -> None:
     parser.add_argument("--missing-date-strategy", choices=["interpolate", "zero", "error"], default="interpolate")
     parser.add_argument("--grain", choices=[DAILY_GRAIN, WEEKLY_GRAIN], default=DAILY_GRAIN)
     parser.add_argument("--weekly-freq", default=DEFAULT_WEEKLY_FREQ, help="Pandas weekly frequency used when --grain weekly.")
-    parser.add_argument("--output-dir", default="outputs_multifold_91d_validation")
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--reuse-cache", action="store_true", help="Skip the offline run when its manifest and artifacts match all inputs and parameters.")
     args = parser.parse_args()
 
     set_seeds()
-    output_dir = Path(args.output_dir)
     if args.grid_step is None:
         args.grid_step = default_grid_step_for_grain(args.grain)
     if args.grid_step <= 0:
@@ -579,9 +671,15 @@ def main() -> None:
     default_pool = WEEKLY_DEFAULT_POOL if args.grain == WEEKLY_GRAIN else DEFAULT_POOL
     pool_text = args.pool if args.pool is not None else ",".join(default_pool)
     pool = [m.strip() for m in pool_text.split(",") if m.strip()]
+    args.run_mode = "offline_custom_pool_validation" if args.pool is not None else "offline_full_pool_validation"
     benchmark = benchmark_for_grain(args.grain)
     if benchmark not in pool:
         raise ValueError(f"Pool must include the benchmark {benchmark}.")
+    output_dir = Path(args.output_dir) if args.output_dir else default_output_dir(args.horizon, args.grain)
+    args.cache_signature = validation_cache_signature(args, pool)
+    if args.reuse_cache and validation_cache_is_valid(output_dir, args.cache_signature):
+        print(f"[cache] Reusing {output_dir}", flush=True)
+        return
     openings = load_openings(Path(args.opening_info)) if args.opening_info else None
     audit_path = output_dir / "missing_sales_dates_audit.csv"
     audit_path.unlink(missing_ok=True)
@@ -593,6 +691,7 @@ def main() -> None:
         weekly_freq=args.weekly_freq,
     )
     args.missing_days_filled = int(df.attrs.get("missing_days_filled", 0))
+    args.training_cutoff = df["ds"].max()
     grid = build_grid(df, args.horizon, args.grid_step, args.grain)
     if args.max_grid_cutoffs:
         grid = grid[-args.max_grid_cutoffs :]

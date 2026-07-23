@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import sys
+import types
+
 import pandas as pd
 
-from run_prophet_timesfm_benchmark import forecast_chronos2
+from run_prophet_timesfm_benchmark import forecast_chronos2, load_timesfm
 
 
 class FakeChronos2Pipeline:
@@ -32,3 +35,31 @@ def test_forecast_chronos2_uses_median_and_clips_negative_quantiles() -> None:
     assert out["forecast"].tolist() == [5.0, 6.0]
     assert out["p50"].tolist() == [5.0, 6.0]
     assert out["p025"].tolist() == [0.0, 2.0]
+
+
+def test_load_timesfm_disables_request_time_torch_compile(monkeypatch) -> None:
+    calls = {}
+
+    class FakeModel:
+        def compile(self, config) -> None:
+            calls["forecast_config"] = config
+
+    class FakeTimesFM:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            calls["model_id"] = model_id
+            calls["load_kwargs"] = kwargs
+            return FakeModel()
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.set_float32_matmul_precision = lambda value: calls.update(matmul_precision=value)
+    fake_timesfm = types.ModuleType("timesfm")
+    fake_timesfm.ForecastConfig = lambda **kwargs: kwargs
+    fake_timesfm.TimesFM_2p5_200M_torch = FakeTimesFM
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "timesfm", fake_timesfm)
+
+    load_timesfm(1024, 45)
+
+    assert calls["load_kwargs"] == {"torch_compile": False}
+    assert calls["forecast_config"]["max_horizon"] == 45

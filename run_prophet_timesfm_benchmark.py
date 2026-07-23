@@ -22,20 +22,10 @@ def load_timesfm(max_context: int, max_horizon: int):
     from timesfm import ForecastConfig, TimesFM_2p5_200M_torch
 
     torch.set_float32_matmul_precision("high")
-    try:
-        model = TimesFM_2p5_200M_torch.from_pretrained("google/timesfm-2.5-200m-pytorch")
-    except TypeError as exc:
-        if "proxies" not in str(exc):
-            raise
-        model = TimesFM_2p5_200M_torch._from_pretrained(
-            model_id="google/timesfm-2.5-200m-pytorch",
-            revision=None,
-            cache_dir=None,
-            force_download=False,
-            local_files_only=False,
-            token=None,
-            config=None,
-        )
+    model = TimesFM_2p5_200M_torch.from_pretrained(
+        "google/timesfm-2.5-200m-pytorch",
+        torch_compile=False,
+    )
     model.compile(
         ForecastConfig(
             max_context=max_context,
