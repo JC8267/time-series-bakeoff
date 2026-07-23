@@ -24,6 +24,8 @@ LOG_COLUMNS = [
     "row_type",
     "model_name",
     "comparison_model",
+    "horizon",
+    "grain",
     "evaluation_window",
     "rows",
     "wape",
@@ -44,25 +46,78 @@ def parse_model_horizon(model_name: str) -> tuple[int | None, str | None]:
 
 
 def infer_grain(forecast: pd.DataFrame) -> str:
+    if "grain" in forecast:
+        grains = set(forecast["grain"].dropna().astype(str).str.lower())
+        if len(grains) == 1:
+            grain = next(iter(grains))
+            if grain in {"daily", "weekly"}:
+                return grain
+        if grains:
+            raise ValueError(f"Forecast contains unsupported or mixed grains: {sorted(grains)}")
     if "weekly_segment" in forecast.columns or forecast["model_name"].astype(str).str.contains(r"_\d+w_").any():
         return "weekly"
     return "daily"
 
 
-def elapsed_bucket(ds: pd.Timestamp, training_cutoff: pd.Timestamp | None, grain: str) -> str:
-    if training_cutoff is None or pd.isna(training_cutoff):
+def horizon_limits(forecast: pd.DataFrame, grain: str) -> list[int]:
+    if "horizon" in forecast:
+        limits = sorted({int(value) for value in pd.to_numeric(forecast["horizon"], errors="coerce").dropna() if int(value) > 0})
+        if limits:
+            return limits
+    return [4, 12, 26, 52] if grain == "weekly" else [28, 91, 180, 365]
+
+
+def elapsed_bucket(
+    ds: pd.Timestamp,
+    training_cutoff: pd.Timestamp | None,
+    grain: str,
+    limits: list[int] | None = None,
+    horizon_step: int | None = None,
+) -> str:
+    limits = limits or ([4, 12, 26, 52] if grain == "weekly" else [28, 91, 180, 365])
+    if horizon_step is not None and pd.notna(horizon_step):
+        elapsed = max(1, int(horizon_step))
+    elif training_cutoff is None or pd.isna(training_cutoff):
         return "realized"
-    days = max(1, int((pd.Timestamp(ds) - pd.Timestamp(training_cutoff)).days))
-    if grain == "weekly":
-        weeks = max(1, round(days / 7))
-        for limit in (4, 12, 26, 52):
-            if weeks <= limit:
-                return f"<= {limit}w"
-        return "> 52w"
-    for limit in (28, 91, 180, 365):
-        if days <= limit:
-            return f"<= {limit}d"
-    return "> 365d"
+    else:
+        days = max(1, int((pd.Timestamp(ds) - pd.Timestamp(training_cutoff)).days))
+        elapsed = max(1, round(days / 7)) if grain == "weekly" else days
+    unit = "w" if grain == "weekly" else "d"
+    for limit in limits:
+        if elapsed <= limit:
+            return f"<= {limit}{unit}"
+    return f"> {limits[-1]}{unit}"
+
+
+def monitor_dimensions(forecast: pd.DataFrame, default_grain: str) -> pd.DataFrame:
+    out = forecast.copy()
+    if "horizon" in out:
+        out["monitor_horizon"] = pd.to_numeric(out["horizon"], errors="coerce")
+    else:
+        out["monitor_horizon"] = [parse_model_horizon(name)[0] for name in out["model_name"].astype(str)]
+    if "grain" in out:
+        out["monitor_grain"] = out["grain"].fillna(default_grain).astype(str).str.lower()
+    else:
+        out["monitor_grain"] = [
+            parse_model_horizon(name)[1] or default_grain for name in out["model_name"].astype(str)
+        ]
+    return out
+
+
+def add_evaluation_windows(forecast: pd.DataFrame, default_grain: str) -> pd.DataFrame:
+    out = monitor_dimensions(forecast, default_grain)
+    limits = horizon_limits(out, default_grain)
+    out["evaluation_window"] = [
+        elapsed_bucket(
+            row.ds,
+            getattr(row, "training_cutoff", None),
+            row.monitor_grain,
+            limits,
+            getattr(row, "horizon_step", None),
+        )
+        for row in out.itertuples(index=False)
+    ]
+    return out
 
 
 def load_manifest(forecast_csv: Path) -> dict[str, Any]:
@@ -77,6 +132,8 @@ def realized_forecasts(forecast_csv: Path, sales_csv: Path, weekly_freq: str = D
     forecast["ds"] = pd.to_datetime(forecast["ds"])
     if "training_cutoff" in forecast:
         forecast["training_cutoff"] = pd.to_datetime(forecast["training_cutoff"])
+    if "forecast_origin" in forecast:
+        forecast["forecast_origin"] = pd.to_datetime(forecast["forecast_origin"])
     grain = infer_grain(forecast)
     actuals = load_sales(sales_csv, grain=grain, weekly_freq=weekly_freq)[["ds", "y"]].rename(columns={"y": "actual"})
     realized = forecast.merge(actuals, on="ds", how="inner")
@@ -87,12 +144,9 @@ def realized_forecasts(forecast_csv: Path, sales_csv: Path, weekly_freq: str = D
 
 def model_summary_rows(realized: pd.DataFrame, source_run_id: str, forecast_csv: Path, grain: str) -> list[dict[str, Any]]:
     rows = []
-    realized = realized.copy()
-    realized["evaluation_window"] = [
-        elapsed_bucket(row.ds, row.training_cutoff if "training_cutoff" in realized else None, grain)
-        for row in realized.itertuples(index=False)
-    ]
-    for (model_name, window), group in realized.groupby(["model_name", "evaluation_window"], dropna=False):
+    realized = add_evaluation_windows(realized, grain)
+    dimensions = ["model_name", "monitor_horizon", "monitor_grain", "evaluation_window"]
+    for (model_name, horizon, row_grain, window), group in realized.groupby(dimensions, dropna=False):
         scores = score_group(group)
         rows.append(
             {
@@ -101,6 +155,8 @@ def model_summary_rows(realized: pd.DataFrame, source_run_id: str, forecast_csv:
                 "row_type": "model",
                 "model_name": model_name,
                 "comparison_model": "",
+                "horizon": "" if pd.isna(horizon) else int(horizon),
+                "grain": row_grain,
                 "evaluation_window": window,
                 "rows": int(scores["rows"]),
                 "wape": float(scores["wape"]),
@@ -115,8 +171,15 @@ def model_summary_rows(realized: pd.DataFrame, source_run_id: str, forecast_csv:
     return rows
 
 
-def final_model_for_challenger(model_name: str, model_names: set[str]) -> str | None:
-    horizon, grain = parse_model_horizon(model_name)
+def final_model_for_challenger(
+    model_name: str,
+    model_names: set[str],
+    horizon: int | None = None,
+    grain: str | None = None,
+) -> str | None:
+    parsed_horizon, parsed_grain = parse_model_horizon(model_name)
+    horizon = horizon or parsed_horizon
+    grain = grain or parsed_grain
     if horizon is None or grain is None:
         return None
     unit = "w" if grain == "weekly" else "d"
@@ -127,17 +190,19 @@ def final_model_for_challenger(model_name: str, model_names: set[str]) -> str | 
 
 def challenger_rows(realized: pd.DataFrame, source_run_id: str, forecast_csv: Path, grain: str) -> list[dict[str, Any]]:
     rows = []
+    realized = add_evaluation_windows(realized, grain)
     model_names = set(realized["model_name"].astype(str))
     challengers = sorted(name for name in model_names if name.startswith("challenger_"))
     for challenger in challengers:
-        final_model = final_model_for_challenger(challenger, model_names)
+        challenger_group = realized[realized["model_name"].eq(challenger)]
+        horizon_values = challenger_group["monitor_horizon"].dropna()
+        horizon = int(horizon_values.iloc[0]) if len(horizon_values) else None
+        grain_values = challenger_group["monitor_grain"].dropna()
+        row_grain = str(grain_values.iloc[0]) if len(grain_values) else grain
+        final_model = final_model_for_challenger(challenger, model_names, horizon, row_grain)
         if final_model is None:
             continue
         pair = realized[realized["model_name"].isin([final_model, challenger])].copy()
-        pair["evaluation_window"] = [
-            elapsed_bucket(row.ds, row.training_cutoff if "training_cutoff" in pair else None, grain)
-            for row in pair.itertuples(index=False)
-        ]
         for window, group in pair.groupby("evaluation_window"):
             wide = group.pivot_table(index=["ds", "actual"], columns="model_name", values="forecast").dropna().reset_index()
             if wide.empty:
@@ -156,6 +221,8 @@ def challenger_rows(realized: pd.DataFrame, source_run_id: str, forecast_csv: Pa
                     "row_type": "adjudication",
                     "model_name": challenger,
                     "comparison_model": final_model,
+                    "horizon": horizon if horizon is not None else "",
+                    "grain": row_grain,
                     "evaluation_window": window,
                     "rows": int(challenger_scores["rows"]),
                     "wape": float(challenger_scores["wape"]),
@@ -170,17 +237,36 @@ def challenger_rows(realized: pd.DataFrame, source_run_id: str, forecast_csv: Pa
     return rows
 
 
+def monitor_row_key(record: dict[str, Any]) -> tuple[str, ...]:
+    parsed_horizon, parsed_grain = parse_model_horizon(str(record.get("model_name", "")))
+    horizon = record.get("horizon", "")
+    if horizon == "" or pd.isna(horizon):
+        horizon = parsed_horizon or ""
+    if horizon != "":
+        horizon = str(int(float(horizon)))
+    grain = record.get("grain", "")
+    if grain == "" or pd.isna(grain):
+        grain = parsed_grain or ""
+    values = {
+        **record,
+        "horizon": horizon,
+        "grain": str(grain).lower(),
+    }
+    key_cols = ["source_run_id", "row_type", "model_name", "comparison_model", "horizon", "grain", "evaluation_window"]
+    return tuple("" if pd.isna(values.get(col, "")) else str(values.get(col, "")) for col in key_cols)
+
+
 def append_monitor_rows(log_csv: Path, rows: list[dict[str, Any]]) -> int:
     log_csv.parent.mkdir(parents=True, exist_ok=True)
     existing = pd.read_csv(log_csv) if log_csv.exists() else pd.DataFrame(columns=LOG_COLUMNS)
-    key_cols = ["source_run_id", "row_type", "model_name", "comparison_model", "evaluation_window"]
-    existing_keys = set(map(tuple, existing[key_cols].fillna("").astype(str).to_numpy())) if len(existing) else set()
+    existing = existing.reindex(columns=LOG_COLUMNS)
+    existing_keys = {monitor_row_key(record) for record in existing.to_dict("records")}
     now = datetime.now(timezone.utc).isoformat()
     new_rows = []
     for row in rows:
         record = {col: row.get(col, "") for col in LOG_COLUMNS}
         record["logged_at"] = now
-        key = tuple(str(record[col]) for col in key_cols)
+        key = monitor_row_key(record)
         if key not in existing_keys:
             new_rows.append(record)
             existing_keys.add(key)
@@ -192,31 +278,49 @@ def append_monitor_rows(log_csv: Path, rows: list[dict[str, Any]]) -> int:
     return len(new_rows)
 
 
-def grid_model_for_final(model_name: str) -> str | None:
-    horizon, grain = parse_model_horizon(model_name)
-    if horizon is None or grain is None:
+def grid_model_for_final(model_name: str, grain: str | None = None) -> str | None:
+    _, parsed_grain = parse_model_horizon(model_name)
+    grain = grain or parsed_grain
+    if grain is None:
         return None
     if grain == "weekly":
         return "daily_reagg_seasonal_naive_lag_365"
     return "seasonal_naive_lag_364"
 
 
-def grid_path_for_final(model_name: str) -> Path | None:
-    horizon, grain = parse_model_horizon(model_name)
+def grid_path_for_final(
+    model_name: str,
+    horizon: int | None = None,
+    grain: str | None = None,
+    manifest: dict[str, Any] | None = None,
+) -> Path | None:
+    parsed_horizon, parsed_grain = parse_model_horizon(model_name)
+    horizon = horizon or parsed_horizon
+    grain = grain or parsed_grain
     if horizon is None or grain is None:
         return None
+    interval_source = (manifest or {}).get("interval_sources", {}).get(str(horizon), {})
+    if interval_source.get("grid"):
+        return Path(interval_source["grid"])
     if grain == "weekly":
         return Path(f"outputs_weekly_multifold_{horizon}w_daily_reagg_pool") / "multifold_grid_predictions.csv"
     return Path(f"outputs_multifold_{horizon}d_validation") / "multifold_grid_predictions.csv"
 
 
-def mean_abs_backtest_bias(model_name: str) -> float | None:
-    grid_path = grid_path_for_final(model_name)
-    grid_model = grid_model_for_final(model_name)
+def mean_abs_backtest_bias(
+    model_name: str,
+    horizon: int | None = None,
+    grain: str | None = None,
+    manifest: dict[str, Any] | None = None,
+) -> float | None:
+    grid_path = grid_path_for_final(model_name, horizon, grain, manifest)
+    grid_model = grid_model_for_final(model_name, grain)
     if grid_path is None or grid_model is None or not grid_path.exists():
         return None
     preds = pd.read_csv(grid_path, parse_dates=["cutoff"])
     preds = preds[preds["model_name"].eq(grid_model)].copy()
+    if horizon is not None and "horizon_step" in preds:
+        preds = preds[preds["horizon_step"].le(horizon)]
     if preds.empty:
         return None
     bias = preds.groupby("cutoff", group_keys=False).apply(score_group, include_groups=False)["bias_pct"].abs()
@@ -236,13 +340,15 @@ def cusum_series(bias_pct: pd.Series, slack: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def write_alarm_state(realized: pd.DataFrame, output_dir: Path) -> dict[str, Any]:
+def write_alarm_state(realized: pd.DataFrame, output_dir: Path, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
     states = []
-    for model_name, group in realized[realized["model_name"].astype(str).str.startswith("final_")].groupby("model_name"):
+    final = monitor_dimensions(realized[realized["model_name"].astype(str).str.startswith("final_")], infer_grain(realized))
+    for (model_name, horizon, grain), group in final.groupby(["model_name", "monitor_horizon", "monitor_grain"], dropna=False):
         row_bias = group.sort_values("ds").set_index("ds").assign(row_bias_pct=lambda x: (x["forecast"] - x["actual"]) / x["actual"].replace(0, np.nan))["row_bias_pct"].dropna()
         if row_bias.empty:
             continue
-        backtest_bias = mean_abs_backtest_bias(model_name)
+        horizon_value = None if pd.isna(horizon) else int(horizon)
+        backtest_bias = mean_abs_backtest_bias(model_name, horizon_value, grain, manifest)
         slack = 0.5 * backtest_bias if backtest_bias is not None else 0.5 * float(row_bias.abs().mean())
         series = cusum_series(row_bias, slack)
         threshold = 4.0 * slack
@@ -250,6 +356,8 @@ def write_alarm_state(realized: pd.DataFrame, output_dir: Path) -> dict[str, Any
         states.append(
             {
                 "model_name": model_name,
+                "horizon": horizon_value,
+                "grain": grain,
                 "slack": slack,
                 "threshold": threshold,
                 "backtest_mean_abs_bias_pct": backtest_bias,
@@ -280,14 +388,15 @@ def main() -> None:
     forecast_csv = Path(args.forecast_csv)
     log_csv = Path(args.log_csv)
     realized, manifest, grain = realized_forecasts(forecast_csv, Path(args.sales_csv), args.weekly_freq)
-    source_run_id = str(manifest.get("run_id") or forecast_csv.parent.name)
+    row_run_ids = realized["run_id"].dropna().astype(str).unique().tolist() if "run_id" in realized else []
+    source_run_id = str(manifest.get("run_id") or (row_run_ids[0] if len(row_run_ids) == 1 else forecast_csv.parent.name))
     if realized.empty:
         raise ValueError("No forecast rows are realized in the provided sales file.")
 
     rows = model_summary_rows(realized, source_run_id, forecast_csv, grain)
     rows.extend(challenger_rows(realized, source_run_id, forecast_csv, grain))
     appended = append_monitor_rows(log_csv, rows)
-    alarm_state = write_alarm_state(realized, log_csv.parent)
+    alarm_state = write_alarm_state(realized, log_csv.parent, manifest)
 
     run_manifest = {
         "run_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
@@ -296,6 +405,9 @@ def main() -> None:
         "sales_csv": args.sales_csv,
         "source_run_id": source_run_id,
         "grain": grain,
+        "horizons": sorted({int(value) for value in pd.to_numeric(realized.get("horizon"), errors="coerce").dropna()})
+        if "horizon" in realized
+        else [],
         "realized_rows": int(len(realized)),
         "rows_appended": appended,
         "alarm_constants": alarm_state["constants"],

@@ -4,11 +4,13 @@ Daily sales forecasting bakeoff with opening-aware features, TimesFM/Prophet ben
 
 ## Start Here
 
-Build the current production forecast package (seasonal naive production rows plus the pre-registered 75/25 naive/TimesFM challenger, all four horizons, leak-free residual-quantile intervals):
+Build final-only production forecasts for any daily horizons from 1 through 365, with leak-free residual-quantile intervals:
 
 ```powershell
-python run_production_forecast.py --sales-csv daily_sales_data.csv --output-dir outputs_production_forecast
+python run_production_forecast.py --sales-csv daily_sales_data.csv --horizons 28,45,91 --output-dir outputs_production_forecast
 ```
+
+Add `--include-challenger` only when an exact, non-degraded validation grid exists; the pre-registered 75/25 naive/TimesFM blend is then written separately to `diagnostic_forecast.csv`.
 
 Run the opening-aware 28/91 validation:
 
@@ -49,4 +51,3 @@ See `DATA.md` for the trade-area data semantics (ecomm backfill, scope vs the ag
 ```powershell
 python -m pytest
 ```
-
