@@ -12,6 +12,7 @@ daily_sales_data.csv
 opening_info.csv
 complete_opening_info.csv
 bu_level_sls.csv
+by_offer/raw_data.csv
 
 # Generated run outputs and work dirs (contain absolute sales figures)
 outputs*/
