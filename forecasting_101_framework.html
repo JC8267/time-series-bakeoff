@@ -1,0 +1,1410 @@
+<title>Points, Bands, Baselines</title>
+<style>
+  :root {
+    --ground:      #EDEFF2;
+    --surface:     #FBFCFD;
+    --surface-2:   #E4E8ED;
+    --ink:         #141A22;
+    --ink-2:       #47525F;
+    --ink-3:       #77828F;
+    --rule:        #D2D8DF;
+    --rule-strong: #B6BFC9;
+    --accent:      #1B5C9E;
+    --accent-ink:  #164B81;
+    --accent-soft: rgba(27, 92, 158, 0.09);
+    --warn:        #97561A;
+    --warn-soft:   rgba(151, 86, 26, 0.10);
+
+    --serif: ui-serif, Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #11161C;
+      --surface:     #181E26;
+      --surface-2:   #212933;
+      --ink:         #E2E7ED;
+      --ink-2:       #A3AEBA;
+      --ink-3:       #78838F;
+      --rule:        #2A323C;
+      --rule-strong: #3A4450;
+      --accent:      #6FA8DF;
+      --accent-ink:  #8FBEEC;
+      --accent-soft: rgba(111, 168, 223, 0.13);
+      --warn:        #D3A164;
+      --warn-soft:   rgba(211, 161, 100, 0.13);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #11161C;
+    --surface:     #181E26;
+    --surface-2:   #212933;
+    --ink:         #E2E7ED;
+    --ink-2:       #A3AEBA;
+    --ink-3:       #78838F;
+    --rule:        #2A323C;
+    --rule-strong: #3A4450;
+    --accent:      #6FA8DF;
+    --accent-ink:  #8FBEEC;
+    --accent-soft: rgba(111, 168, 223, 0.13);
+    --warn:        #D3A164;
+    --warn-soft:   rgba(211, 161, 100, 0.13);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0 56px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    grid-column: 1 / -1;
+    padding: 64px 0 40px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 18px;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(38px, 6vw, 60px);
+    line-height: 1.04;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 20px;
+  }
+
+  .standfirst {
+    font-family: var(--serif);
+    font-size: clamp(17px, 2.2vw, 20px);
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: var(--measure);
+    margin: 0 0 36px;
+  }
+
+  .goals {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+
+  .goal {
+    background: var(--surface);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .goal-n {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+  }
+
+  .goal-t { font-size: 15px; line-height: 1.45; }
+  .goal-t b { font-weight: 650; }
+
+  /* ---------- nav rail ---------- */
+
+  nav.rail { display: none; }
+
+  @media (min-width: 1040px) {
+    .shell { grid-template-columns: 216px minmax(0, 1fr); }
+    .masthead { grid-column: 1 / -1; }
+    nav.rail {
+      display: block;
+      position: sticky;
+      top: 0;
+      align-self: start;
+      padding: 44px 0 0;
+      max-height: 100vh;
+      overflow-y: auto;
+    }
+    main { padding-top: 44px; }
+  }
+
+  nav.rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  nav.rail a {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.03em;
+    line-height: 1.4;
+    color: var(--ink-3);
+    text-decoration: none;
+    padding: 7px 10px 7px 12px;
+    border-left: 2px solid var(--rule);
+  }
+  nav.rail a:hover, nav.rail a:focus-visible {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  nav.rail .rail-head {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: 0 0 12px 12px;
+  }
+
+  /* ---------- generic prose ---------- */
+
+  main { grid-column: 1 / -1; min-width: 0; }
+  @media (min-width: 1040px) { main { grid-column: 2 / 3; } }
+
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 20px; }
+  li { margin: 0 0 7px; }
+  li::marker { color: var(--ink-3); }
+
+  b, strong { font-weight: 650; color: var(--ink); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  a { color: var(--accent); }
+
+  section.band { padding: 52px 0 8px; }
+  section.band + section.band { border-top: 1px solid var(--rule); }
+
+  .sec-mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 14px;
+  }
+  .sec-mark::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: repeating-linear-gradient(90deg, var(--rule-strong) 0 4px, transparent 4px 9px);
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(26px, 3.4vw, 34px);
+    line-height: 1.14;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+    margin: 0 0 10px;
+    max-width: var(--measure);
+  }
+
+  .sec-sub {
+    color: var(--ink-2);
+    max-width: var(--measure);
+    margin: 0 0 28px;
+  }
+
+  h3 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 21px;
+    line-height: 1.25;
+    text-wrap: balance;
+    margin: 34px 0 12px;
+  }
+
+  /* ---------- slide cards ---------- */
+
+  .slide {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 24px 26px 22px;
+    margin: 0 0 18px;
+  }
+
+  .slide-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .slide-n {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+  }
+
+  .slide-t {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 1.25;
+    letter-spacing: -0.008em;
+    margin: 0;
+    flex: 1 1 260px;
+    min-width: 0;
+  }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    border: 1px solid var(--accent);
+    padding: 2px 7px;
+    flex: none;
+    align-self: center;
+  }
+
+  .msg {
+    background: var(--accent-soft);
+    border-left: 2px solid var(--accent);
+    padding: 12px 16px;
+    margin: 0 0 18px;
+    max-width: none;
+  }
+  .msg p { margin: 0; max-width: var(--measure); }
+
+  .block { margin: 0 0 16px; }
+  .block:last-child { margin-bottom: 0; }
+
+  .lbl {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 7px;
+  }
+
+  .watch {
+    border-left: 2px solid var(--warn);
+    background: var(--warn-soft);
+    padding: 12px 16px;
+  }
+  .watch .lbl { color: var(--warn); }
+  .watch p { margin: 0; }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ---------- code ---------- */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.65;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    padding: 14px 16px;
+    margin: 0 0 16px;
+    overflow-x: auto;
+  }
+
+  /* ---------- spine ---------- */
+
+  .spine { list-style: none; margin: 0 0 8px; padding: 0; counter-reset: spine; max-width: var(--measure); }
+  .spine li {
+    counter-increment: spine;
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule);
+    margin: 0;
+  }
+  .spine li::before {
+    content: counter(spine, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    padding-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- checklist ---------- */
+
+  .check { list-style: none; padding: 0; }
+  .check li {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 12px;
+    align-items: start;
+    margin: 0 0 10px;
+  }
+  .check li::before {
+    content: "";
+    width: 13px; height: 13px;
+    margin-top: 6px;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+  }
+
+  footer.colophon {
+    grid-column: 1 / -1;
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    font-size: 13.5px;
+    color: var(--ink-3);
+  }
+  footer.colophon p { max-width: var(--measure); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Presentation framework &middot; forecasting fundamentals</p>
+    <h1>Points, Bands, Baselines</h1>
+    <p class="standfirst">A session for the people across the org who already produce something they
+      call a forecast, but have never been shown how to tell whether it is any good. Assumes
+      spreadsheet fluency and no statistics.</p>
+    <div class="goals">
+      <div class="goal"><span class="goal-n">GOAL 1</span><span class="goal-t">Always ship a <b>baseline</b> beside the forecast.</span></div>
+      <div class="goal"><span class="goal-n">GOAL 2</span><span class="goal-t">Always ship an <b>interval</b>, not just one number.</span></div>
+      <div class="goal"><span class="goal-n">GOAL 3</span><span class="goal-t">Always report <b>bias and error separately</b>.</span></div>
+      <div class="goal"><span class="goal-n">GOAL 4</span><span class="goal-t">Always score on a <b>held-out backtest</b>.</span></div>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <p class="rail-head">Contents</p>
+    <ol>
+      <li><a href="#spine">The spine</a></li>
+      <li><a href="#s1">1 &nbsp;What a forecast is</a></li>
+      <li><a href="#s2">2 &nbsp;Why points alone fail</a></li>
+      <li><a href="#s3">3 &nbsp;Error metrics</a></li>
+      <li><a href="#s4">4 &nbsp;The baseline rule</a></li>
+      <li><a href="#s5">5 &nbsp;Backtesting</a></li>
+      <li><a href="#s6">6 &nbsp;Minimum standard</a></li>
+      <li><a href="#s7">7 &nbsp;Workshop material</a></li>
+      <li><a href="#receipts">Receipts</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- =============== SPINE =============== -->
+    <section class="band" id="spine">
+      <p class="sec-mark">Structure</p>
+      <h2>The spine</h2>
+      <p class="sec-sub">Seven beats. If you remember only these, you can rebuild the deck from
+        scratch. Each slide below hangs off one of them.</p>
+
+      <ol class="spine">
+        <li>A forecast is a <b>falsifiable statement about the future</b> — and most things called
+          forecasts in the org are targets, not forecasts.</li>
+        <li>One number is not a forecast. Demand is a <b>distribution</b>; a point forecast throws
+          away the part the business actually needs.</li>
+        <li>Error metrics make &ldquo;is this good?&rdquo; answerable. <b>Bias and accuracy are
+          different questions.</b></li>
+        <li>&ldquo;Good&rdquo; only means something <b>relative to a baseline</b>. The baseline is
+          not optional.</li>
+        <li>The baseline is <b>embarrassingly strong</b>: last year, same day. Beating it is the
+          bar, not a formality.</li>
+        <li>You only learn any of this from a <b>backtest</b> — and backtests are easy to fool
+          yourself with.</li>
+        <li>Here is the <b>minimum standard</b> for a forecast readout, on one page.</li>
+      </ol>
+
+      <h3>How to read a slide entry</h3>
+      <p>Every slide below has four parts: <b>Message</b> (the single sentence the audience should
+        leave with — if there are two, split the slide), <b>Show</b> (one chart or one table, no
+        more), <b>Say</b> (talking points in order), and <b>Watch for</b> (the objection that
+        surfaces right there). Slides tagged <span class="chip">Core</span> are the 25-minute cut.</p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Version</th><th>Slides</th><th>Use</th></tr></thead>
+          <tbody>
+            <tr><td class="num">25 min &mdash; core</td><td class="num">1, 3, 4, 6, 8, 10, 12, 13, 14, 16, 18, 20, 23, 27</td><td>Staff meeting or lunch-and-learn</td></tr>
+            <tr><td class="num">50 min &mdash; full</td><td class="num">All 29</td><td>Working session with the teams that own forecasts</td></tr>
+            <tr><td class="num">Follow-up</td><td>Section 7 + live demo</td><td>Hands-on; attendees bring their own forecast file</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- =============== SECTION 1 =============== -->
+    <section class="band" id="s1">
+      <p class="sec-mark">Section 1</p>
+      <h2>What a forecast actually is</h2>
+      <p class="sec-sub">Three slides. The job here is definitional, and it is where most of the
+        room's real problem lives — they have never separated the forecast from the target.</p>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">01</span><h4 class="slide-t">Three things people call a forecast</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>A forecast, a target, and a plan are three different objects. Mixing
+          them is the single most common failure in the room.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <div class="scroll">
+            <table>
+              <thead><tr><th></th><th>Forecast</th><th>Target</th><th>Plan</th></tr></thead>
+              <tbody>
+                <tr><td>Question it answers</td><td>What do we <em>expect</em>?</td><td>What do we <em>want</em>?</td><td>What will we <em>do</em>?</td></tr>
+                <tr><td>Owner</td><td>Analyst</td><td>Leadership</td><td>Operator</td></tr>
+                <tr><td>Can it be wrong?</td><td>Yes, measurably</td><td>No — it's a choice</td><td>No — it's a commitment</td></tr>
+                <tr><td>Should it be unbiased?</td><td><b>Yes</b></td><td>N/A</td><td>N/A</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Only the first column is scored for accuracy. The other two are decisions.</li>
+            <li>If one number does two of these jobs, it gets pulled toward the incentive and away
+              from the truth — and it will be biased in a <em>consistent direction</em>.</li>
+            <li>Ask the room: &ldquo;when you produce your number, which column is it in?&rdquo;
+              Most will answer all three.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>&ldquo;But leadership wants one number.&rdquo; They can have one — a deliberately
+            chosen quantile of the forecast (slide 6). That is different from bending the
+            expectation to match the ask.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">02</span><h4 class="slide-t">The three properties every forecast must state</h4></div>
+        <div class="msg"><p>A number without horizon, grain, and origin cannot be scored — so it
+          cannot be improved.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <ul>
+            <li><b>Horizon</b> — how far ahead. Seven days out and 180 days out are different
+              problems with different achievable accuracy. One &ldquo;accuracy&rdquo; number
+              spanning mixed horizons is meaningless.</li>
+            <li><b>Grain</b> — the time bucket <em>and</em> the entity level. Daily by item is a
+              different problem than monthly by channel, and error at one grain says little about
+              the other.</li>
+            <li><b>Origin</b> — the as-of date. What did you know when you made it? Everything
+              after the origin must be hidden from you.</li>
+          </ul>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Origin is the one people skip, and it invalidates the most work.</li>
+            <li>If you built a &ldquo;forecast&rdquo; for March using data through April, you built
+              a fit, not a forecast.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>&ldquo;We refresh weekly, so the origin moves.&rdquo; Then you have a <em>series</em>
+            of forecasts, each with its own origin, and you score each at a fixed horizon from its
+            own origin.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">03</span><h4 class="slide-t">Why forecasting is hard, in one picture</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>A series is signal — level, trend, seasonality, known events — plus
+          noise you cannot predict. The goal is to capture all the signal and none of the noise.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <p>One real series the audience recognizes, decomposed into four stacked panels: level,
+            weekly seasonality, annual seasonality, residual.</p>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Level is where the series sits; trend is which way it drifts.</li>
+            <li>Seasonality is usually <em>two</em> cycles at once — day-of-week and time-of-year.
+              Both matter, and they interact.</li>
+            <li>Known events (holidays, promos, openings) are signal you can know in advance.</li>
+            <li>What's left is noise. A model that &ldquo;fits&rdquo; noise looks brilliant on
+              history and fails forward. That's overfitting, and avoiding it is the rest of this talk.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>&ldquo;Our business is unpredictable.&rdquo; Partly true — which is exactly why
+            section 2 exists. Quantifying how unpredictable is the job, not an excuse to skip it.</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- =============== SECTION 2 =============== -->
+    <section class="band" id="s2">
+      <p class="sec-mark">Section 2</p>
+      <h2>Why point forecasts alone are bad</h2>
+      <p class="sec-sub">The heart of the deck. Seven slides that move from &ldquo;you deleted
+        information&rdquo; to &ldquo;the correct decision is now unavailable&rdquo; to &ldquo;here
+        is how to fix it this week.&rdquo;</p>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">04</span><h4 class="slide-t">The number you deliver summarizes something you never showed</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>Reality is a distribution of possible outcomes. A point forecast is one
+          summary statistic of that distribution — and you almost certainly never chose which one.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <p>A distribution curve for a single future day, with the point forecast as one tick on
+            the x-axis and the rest of the curve shaded behind it.</p>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>When you say &ldquo;we'll sell 1,000,&rdquo; you mean something closer to
+              &ldquo;the middle of a range from 700 to 1,400.&rdquo; The range is real information
+              and you deleted it.</li>
+            <li>The receiver assumes 1,000 is what will happen. It won't. The probability of hitting
+              any exact point is essentially zero.</li>
+            <li>The honest object: p50 = 1,000, and 80% of outcomes fall between 800 and 1,250.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">05</span><h4 class="slide-t">Which point is <em>the</em> point?</h4></div>
+        <div class="msg"><p>&ldquo;The forecast&rdquo; is ambiguous even as a single number — mean
+          and median differ, and your error metric silently picks one for you.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <p>A right-skewed demand distribution with the mean and the median marked apart.</p>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Minimizing squared error targets the <b>mean</b>. Minimizing absolute error targets
+              the <b>median</b>.</li>
+            <li>Demand is usually right-skewed — a floor at zero, occasional large spikes — so the
+              mean sits above the median.</li>
+            <li>Two teams can therefore both be &ldquo;right&rdquo; and disagree materially, because
+              they optimized different things without knowing it.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>This is the first moment people realize their metric choice <em>is</em> a modeling
+            choice. Let it land — it sets up section 3.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">06</span><h4 class="slide-t">No decision actually wants the middle</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>Every real decision downstream of a forecast wants a <em>quantile</em>,
+          not the average — and usually not the middle one.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Decision</th><th>Cost of under</th><th>Cost of over</th><th>What it needs</th></tr></thead>
+              <tbody>
+                <tr><td>Inventory / safety stock</td><td>Lost sale, lost customer</td><td>Carrying cost, markdown</td><td>High quantile (p90+)</td></tr>
+                <tr><td>Staffing a shift</td><td>Service collapse</td><td>Idle labor hours</td><td>High-ish quantile</td></tr>
+                <tr><td>Cash / commitment</td><td>Breach, emergency spend</td><td>Idle capital</td><td>Depends — but stated</td></tr>
+                <tr><td>Capacity investment</td><td>Can't serve demand</td><td>Stranded asset</td><td>Full distribution</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>If running out costs four times what holding extra costs, you should deliberately
+              plan <b>above</b> your expected value. That isn't optimism, it's arithmetic.</li>
+            <li>You cannot do that arithmetic with a point forecast — the required information, how
+              wide the uncertainty is, was discarded before the decision-maker saw it.</li>
+            <li>This is the strongest argument in the deck. Point forecasts don't merely lose
+              precision; they make the correct decision <em>unavailable</em>.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">07</span><h4 class="slide-t">You can't tell a bad forecast from an unlucky one</h4></div>
+        <div class="msg"><p>Without an interval, &ldquo;we missed by 12%&rdquo; has no
+          interpretation.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Forecast said 1,000; actual was 1,200. Broken model, or a normal Tuesday?</li>
+            <li>With a band the question is answerable. If the 80% band was 950–1,050, the model is
+              broken. If it was 800–1,250, that was a normal outcome and nothing needs fixing.</li>
+            <li>Without the band, every miss triggers the same response: a meeting, a manual
+              override, &ldquo;the model doesn't understand our business.&rdquo; Most of those
+              meetings are about noise.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>This slide converts the skeptics who don't care about statistics but do hate wasted
+            meetings. Aim it at them.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">08</span><h4 class="slide-t">Manual overrides without a band are unmeasurable</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>If you adjust a forecast you need to know whether the adjustment was
+          bigger than the noise. Otherwise you're adding variance and calling it judgment.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Overrides are often right — a planner knows about a promo the model doesn't.</li>
+            <li>But a +3% override on a series whose 80% band is ±20% is indistinguishable from
+              doing nothing, and it costs you the audit trail.</li>
+            <li>Minimum standard: log the pre-override and post-override forecast and score both.
+              Within a year you'll know exactly which overrides earn their keep.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">09</span><h4 class="slide-t">Intervals are cheap — you already have what you need</h4></div>
+        <div class="msg"><p>You don't need a sophisticated model to produce an interval. You need
+          your own past errors.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>1.  Backtest your existing forecast over the last N origins.
+    You now have a pile of errors:  error = forecast - actual
+
+2.  Take the 10th and 90th percentile of those errors,
+    separately for each horizon step.
+
+3.  Your 80% band is:
+        lower = forecast + p10(error)
+        upper = forecast + p90(error)</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>These are empirical residual quantiles. Ten lines of code, and they work on
+              <em>any</em> forecast — including a spreadsheet one.</li>
+            <li>Then measure <b>coverage</b>: across the backtest, what fraction of actuals landed
+              inside the 80% band? It should be about 80%. If it's 60%, your bands are too narrow
+              and you are overconfident.</li>
+            <li>In our own bakeoff, weekly 80% bands measured 0.68–0.77 coverage — genuinely
+              undercovering, and we report it that way. Measuring it is the win; a wrong band you
+              know about beats a point forecast you don't.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>&ldquo;Our errors aren't normally distributed.&rdquo; Correct — which is exactly why
+            we take empirical quantiles of observed errors instead of a formula with a standard
+            deviation in it.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">10</span><h4 class="slide-t">Two rules about intervals people get wrong</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>Bands don't add, and uncertainty isn't uniform across the year.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li><b>Do not sum daily bands into a monthly band.</b> Adding up the daily lower bounds
+              produces a month that essentially cannot happen — every single day would have to hit
+              its floor simultaneously. If you need a monthly band, build it at monthly grain.</li>
+            <li><b>Uncertainty concentrates.</b> In our series, November–December residuals run two
+              to three times the rest of the year. One flat band is too wide in June and too narrow
+              in December — precisely backwards from what planning needs.</li>
+            <li>So: report bands by horizon step, and know your high-variance windows.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <!-- =============== SECTION 3 =============== -->
+    <section class="band" id="s3">
+      <p class="sec-mark">Section 3</p>
+      <h2>Error metrics, from scratch</h2>
+      <p class="sec-sub">Eight slides. Build from one definition. The payload is slides 13 and 14 —
+        the bias diagnosis, then the free fix. Given that 92% of this org's forecasts land above
+        actuals, this section is the reason to hold the session at all.</p>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">11</span><h4 class="slide-t">The one definition everything is built on</h4></div>
+        <div class="msg"><p><code>error = forecast &minus; actual</code>. State your sign convention
+          out loud, every time.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Positive error means you forecast too high. Negative means too low.</li>
+            <li>Half of all arguments about &ldquo;is our bias positive or negative&rdquo; are two
+              people using opposite conventions. Pick one, print it on the report, never flip it.</li>
+            <li>Live example worth naming: our reporting calls this bias <em>negative</em>, because it
+              computes <code>actual &minus; forecast</code>. The underlying fact is that forecasts sit
+              <b>above</b> actuals. Anyone hearing &ldquo;negative bias&rdquo; without the convention
+              will go hunting for the opposite problem.</li>
+            <li>The rest of this section is just different ways of adding these errors up.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">12</span><h4 class="slide-t">Bias: are you consistently wrong in one direction?</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>Bias measures direction, not size. Persistent one-sided bias is a
+          <b>process defect</b>, not bad luck — and it is the cheapest thing in this deck to fix.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>bias%  =  sum(forecast - actual)  /  sum(actual)</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Errors should cancel over a full seasonal cycle. Bias near zero means the highs and
+              lows balance.</li>
+            <li>A well-centered forecast lands above the actual about <b>half</b> the time. Ours
+              landed above <b>92%</b> of the time over the last year. That is not a run of bad luck
+              — coin flips don't do that. Something in the process pushes every number up.</li>
+            <li>Bias is not accuracy. You can be 20% off daily with zero bias (half high, half low),
+              or 3% off daily with &minus;3% bias (always low). These need completely different fixes.</li>
+            <li><b>Report both, always.</b> Every forecast readout in this org should show bias and
+              error side by side.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">13</span><h4 class="slide-t">Common causes of persistent one-sided bias</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>If your bias is always the same sign, the cause is almost always on this
+          list — and most of them are organizational, not statistical.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <p>Read this table against the <em>fact</em>, not the sign: our forecasts land
+            <b>above</b> actuals. Start at the top block.</p>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+              <tbody>
+                <tr><td><b>Over</b></td><td>The forecast <em>is</em> the plan or budget, and the plan assumes growth</td><td>Separate forecast from target; score them separately</td></tr>
+                <tr><td><b>Over</b></td><td>A growth factor applied to a level that is flat or declining</td><td>Drop the uplift; test replay-last-year-unscaled as the baseline</td></tr>
+                <tr><td><b>Over</b></td><td>Planned initiatives added at full projected value, none discounted for the ones that won't land</td><td>Apply a realization rate learned from past initiatives</td></tr>
+                <tr><td><b>Over</b></td><td>Anchored on an inflated base year (a promo year, a one-off spike)</td><td>Re-base on a normal year, or model the spike as an event</td></tr>
+                <tr><td><b>Over</b></td><td>Bottom-up sum of individually optimistic regional or category plans</td><td>Reconcile to a top-down total; check bias at the total</td></tr>
+                <tr><td><b>Over</b></td><td>Extrapolating a trend that has already flattened or turned</td><td>Damp the trend, or drop it at long horizons</td></tr>
+                <tr><td>Under</td><td>Optimizing MAPE — it structurally rewards forecasting low (slide 16)</td><td>Report WAPE alongside it</td></tr>
+                <tr><td>Under</td><td>&ldquo;Outlier&rdquo; cleaning removes spikes but never dips</td><td>Symmetric rules only, or don't clean at all</td></tr>
+                <tr><td>Under</td><td>Sales used as demand during stockouts (censored demand)</td><td>Flag stockout periods; don't train on them</td></tr>
+                <tr><td>Drifting</td><td>A level shift the process hasn't absorbed</td><td>Monitor bias over time; alarm on sustained drift</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Notice that nearly every over-forecasting cause is a process problem wearing a math
+              costume. None of them are fixed by a better algorithm.</li>
+            <li>The first two rows are the ones to press on. If the forecast doubles as the plan,
+              it inherits the plan's growth assumption — and if the underlying level is flat or
+              drifting down, that assumption is wrong in the same direction every single period.</li>
+            <li>Fixing bias is nearly free and usually worth more than a better model, because it's
+              systematic — it compounds across every row.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>This is the slide the audience recognizes itself in, and the room may get defensive.
+            Keep it structural: nobody chose to over-forecast, the process chose for them. Confirm
+            the 92% figure yourself before presenting it.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">14</span><h4 class="slide-t">The 92% problem: subtract the offset before you buy a model</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>When 92% of your forecasts land above actuals, most of your error isn't
+          noise — it's a fixed offset. Subtracting it is arithmetic, and it is free.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>Share of periods where forecast &gt; actual, over one year
+
+    a well-centered forecast     ~50%
+    ours                          92%
+
+The fix, in one line:
+
+    debiased = forecast - (median error over a trailing window)</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Split your error into two parts: a <b>systematic</b> part that's there every period,
+              and a <b>random</b> part that isn't. Only the random part is genuinely hard.</li>
+            <li>92% one-sided tells you the split. Under a normal-error assumption it implies the
+              offset is about <b>1.4×</b> the size of the random noise — the systematic part
+              dominates. Removing it alone would cut average absolute error by roughly
+              <b>40–45%</b>.</li>
+            <li>Treat that number as an order-of-magnitude estimate, not a promise: it assumes the
+              offset is stable and the errors are roughly symmetric around it. <b>Measure the real
+              figure on your own backtest</b> — it takes an afternoon and it is the highest-return
+              afternoon available to this team.</li>
+            <li>This is also why a one-line seasonal naive is beating us by 20–30%. It isn't smarter.
+              It simply has no growth assumption baked in, so it doesn't carry the offset.</li>
+            <li>Do it honestly: estimate the offset on a trailing window of <em>past</em> origins
+              only, never on the window you're scoring, and re-check it quarterly. A bias correction
+              is itself a forecast, and it goes stale.</li>
+            <li>Correct only what's stable. If the offset drifts period to period, subtracting a
+              constant will overshoot — go fix the cause on slide 13 instead.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>&ldquo;That's just fudging the number.&rdquo; The opposite: a persistent one-sided
+            error is free information you are currently throwing away every period. Ignoring it is
+            the fudge. The real objection to surface is whether the offset exists because the
+            forecast is doing a second job as the plan — if so, this slide is a patch and slide 13
+            is the cure.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">15</span><h4 class="slide-t">Accuracy: MAE and RMSE</h4></div>
+        <div class="msg"><p>MAE is the typical miss in units. RMSE punishes big misses much harder.
+          Neither compares across series.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>MAE   =  mean( |forecast - actual| )             "average miss, in units"
+RMSE  =  sqrt( mean( (forecast - actual)^2 ) )   "big misses weighted heavier"</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Use MAE when a 10-unit miss is exactly twice as bad as a 5-unit miss.</li>
+            <li>Use RMSE when one enormous miss is disproportionately damaging — capacity breaks,
+              service failures.</li>
+            <li>Both are in units, so they read naturally, but they can't be compared across items
+              of different size. An MAE of 500 is superb on one series and catastrophic on another.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">16</span><h4 class="slide-t">WAPE — and why not MAPE</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>WAPE is the default percentage-error metric. MAPE is the trap, and it
+          may be the reason your bias is negative.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>WAPE  =  sum( |forecast - actual| )  /  sum( actual )      &lt;- use this
+MAPE  =  mean( |forecast - actual|   /       actual  )      &lt;- avoid</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>WAPE is total absolute error as a share of total volume. It's volume-weighted, so
+              the big days count more — which is what the business cares about.</li>
+            <li>MAPE fails three ways. <b>One:</b> undefined at zero, and it explodes for small
+              actuals, so a single near-zero day can dominate. <b>Two:</b> it's asymmetric —
+              under-forecasting caps out at 100% error, while over-forecasting is punished without
+              limit. <b>Optimizing MAPE literally trains you to forecast low.</b> <b>Three:</b> it's
+              unweighted, so a 100% error on a 3-unit day counts the same as a 5% error on a
+              10,000-unit day.</li>
+            <li>Note the direction carefully here, because it's diagnostic. MAPE's asymmetry pushes
+              forecasts <em>down</em>. Ours run <em>high</em> anyway. So whatever is lifting our
+              numbers is strong enough to overpower the metric that's pushing back — which points
+              squarely at the organizational causes on slide 13, not at a technique problem.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>MAPE is entrenched everywhere. Don't fight it head-on — just put WAPE next to it in
+            every report and let people watch the two disagree.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">17</span><h4 class="slide-t">Metric hygiene</h4></div>
+        <div class="msg"><p>Most metric disputes are about <em>which rows were scored</em>, not
+          which formula was used.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Never average percentages across items. Aggregate the numerator and the denominator,
+              then divide.</li>
+            <li>Score at the grain where the decision is made. A forecast can be excellent monthly
+              and useless daily — errors cancel as you aggregate up.</li>
+            <li>Compare models only on <b>identical rows</b>: same dates, same items, same horizons.</li>
+            <li>Exclude nothing after seeing results. If you drop a bad window, disclose it and say why.</li>
+            <li>If you filled missing dates, say how many and treat the metric as approximate.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">18</span><h4 class="slide-t">For probabilistic forecasts: coverage and width</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>Once you ship intervals you need two more numbers to know whether
+          they're honest.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li><b>Coverage</b> — the share of actuals that fell inside the band. An 80% band should
+              catch about 80%. Below that, you're overconfident; far above, the band is uselessly wide.</li>
+            <li><b>Average width</b> — how wide the band is. Coverage alone is gameable: a band from
+              zero to infinity has perfect coverage and zero value. Always report width beside it.</li>
+            <li>For the analytically minded, mention <b>pinball loss</b> — it scores the whole
+              distribution in one number. Mention it, don't teach it. Coverage plus width covers
+              90% of the need.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <!-- =============== SECTION 4 =============== -->
+    <section class="band" id="s4">
+      <p class="sec-mark">Section 4</p>
+      <h2>The baseline rule</h2>
+      <p class="sec-sub">Four slides, and the one the room will remember. Deliver it without
+        smugness — some of the audience built the forecast that's about to lose.</p>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">19</span><h4 class="slide-t">&ldquo;Is 8% WAPE good?&rdquo;</h4></div>
+        <div class="msg"><p>Unanswerable in isolation. Accuracy only means something relative to a
+          baseline scored on the same rows.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>8% WAPE on a stable aggregate might be terrible. 20% WAPE on a volatile sparse item
+              might be excellent.</li>
+            <li>The only sound question: <b>did it beat a dumb rule?</b></li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">20</span><h4 class="slide-t">The baseline: seasonal naive</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>&ldquo;Same period last year&rdquo; is not a strawman. It is a genuinely
+          strong forecast, and it is the bar.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>lag 364:  forecast(today) = actual(364 days ago)   -> keeps the SAME WEEKDAY
+lag 365:  forecast(today) = actual(365 days ago)   -> keeps the SAME CALENDAR DATE</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>364 is exactly 52 weeks, so Saturday maps to Saturday. Use it when day-of-week drives
+              the series.</li>
+            <li>365 maps calendar date to calendar date. Use it when fixed-date events — Christmas,
+              July 4th — dominate.</li>
+            <li>You have to choose, and the choice is worth real accuracy. In our work the daily
+              champion uses lag 364, while the weekly champion forecasts <em>daily</em> at lag 365
+              and sums into weeks — because weekly buckets misallocate the pre-Christmas surge when
+              the holiday weekday shifts year to year. That single change roughly halved the error
+              on the December fold (10.5% → 5.0% WAPE).</li>
+            <li>Why it beats us specifically: replaying last year unscaled carries <em>no growth
+              assumption</em>. When the underlying level is flat or drifting down, that makes it
+              close to bias-centered by construction — while any process that starts from a plan
+              number inherits the plan's optimism every period.</li>
+            <li>It costs one line of SQL. There is no excuse for not having it beside every forecast.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">21</span><h4 class="slide-t">Skill: the only number that says &ldquo;worth it&rdquo;</h4></div>
+        <div class="msg"><p>Report improvement over the baseline, as a percentage, on identical rows.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+<pre>skill  =  1  -  ( WAPE_yours / WAPE_baseline )</pre>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>+20% skill: your forecast cuts error by a fifth versus doing nothing clever. Real value.</li>
+            <li>0%: you spent a quarter matching a one-line rule.</li>
+            <li>Negative: <b>the baseline is better and should replace your forecast today.</b></li>
+            <li>Make this a required field on every readout. It ends the &ldquo;our model is
+              sophisticated&rdquo; conversation immediately and replaces it with a number.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">22</span><h4 class="slide-t">What we learned running the bakeoff properly</h4></div>
+        <div class="msg"><p>We tested six-plus model families against seasonal naive on honest
+          backtests. The naive baseline won essentially everywhere.</p></div>
+        <div class="block">
+          <p class="lbl">Show — what lost</p>
+          <ul>
+            <li>Gradient-boosted trees (HistGradientBoosting, Extra Trees, Random Forest, LightGBM)</li>
+            <li>Ridge regression on lag features</li>
+            <li>Classical statistical models (ARIMA, ETS, SARIMAX, MSTL)</li>
+            <li>Foundation models (TimesFM, Chronos-Bolt, Chronos-2)</li>
+            <li>Learned ensembles and stacks (convex weights, inverse-error weights)</li>
+            <li>Hand-designed seasonal variants (level-scaled, multi-year averaged, holiday-aligned)</li>
+          </ul>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>This is not &ldquo;models are useless.&rdquo; It's that all of these re-model the
+              <em>same sales history</em>. Once level and seasonality are captured there is nothing
+              left to squeeze without <b>new information</b> — covariates like a promo calendar,
+              planned openings, price — or finer structure.</li>
+            <li>At sub-aggregate levels the picture flips: per-market and per-channel models did beat
+              naive. Complexity pays where the series is noisier and the baseline is weaker.</li>
+            <li>Takeaway for the room: <b>start at the baseline, then justify every step away from it.</b></li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>&ldquo;So we shouldn't use models?&rdquo; No — you should <em>earn</em> them. A bakeoff
+            is how you find out, and it takes hours, not months.</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- =============== SECTION 5 =============== -->
+    <section class="band" id="s5">
+      <p class="sec-mark">Section 5</p>
+      <h2>Backtesting: how you actually know</h2>
+      <p class="sec-sub">Four slides. Slide 24 is the credibility slide — tell the story where
+        <em>we</em> were the ones fooled, and you earn the right to critique their work in section 7.</p>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">23</span><h4 class="slide-t">The only honest test</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>Pick a cutoff. Hide everything after it. Forecast. Compare. Roll forward.
+          Repeat.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <p>A timeline: training window, cutoff line, forecast horizon, held-out actuals. Then the
+            same picture stepped forward three times.</p>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>One cutoff is an anecdote. You need several, at the horizon you actually use.</li>
+            <li>Score at the same horizon each time so you're measuring one thing.</li>
+            <li>That's the whole method. Everything after this slide is about how it goes wrong.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">24</span><h4 class="slide-t">Leakage: the mistake that produced our own fake winner</h4></div>
+        <div class="msg"><p>If any information from after the cutoff touched the forecast, the score
+          is fiction — and it will be <em>flatteringly</em> wrong.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Real example from this project: we built an ensemble whose blend weights were fitted
+              on a window that <b>overlapped the evaluation window</b> — by 31 days at the 91-day
+              horizon, and by roughly 11 months at the 365-day horizon.</li>
+            <li>The ensemble looked like a clear winner and was on track to ship.</li>
+            <li>When the weights were refit properly inside each fold — using only data ending at or
+              before that fold's cutoff — the ensemble <b>lost every single fold at every
+              horizon</b> to plain seasonal naive.</li>
+            <li>The root cause was mundane: the weights were chasing which model <em>used to</em> be
+              better, on a window it had already seen.</li>
+            <li>Name the common leaks: fitting anything on post-cutoff data (weights, parameters,
+              scalers, feature selection, even &ldquo;which model to use&rdquo;); using a field that
+              isn't knowable at forecast time; cleaning outliers using the full history.</li>
+          </ul>
+        </div>
+        <div class="block watch">
+          <p class="lbl">Watch for</p>
+          <p>Nobody argues with this slide, because you're the one confessing. That's the point —
+            it buys the authority you need for the workshop.</p>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">25</span><h4 class="slide-t">Overlapping folds: &ldquo;five tests&rdquo; that are really one</h4></div>
+        <div class="msg"><p>If your test windows overlap, you have far fewer independent reads than
+          you think.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Five folds of a 52-week forecast stepped four weeks apart share about 48 of 52 weeks
+              with their neighbor. That's roughly <b>one</b> effective independent window — one
+              opinion, quoted five times.</li>
+            <li>We compute and print &ldquo;effective independent windows&rdquo; on every run for
+              exactly this reason. At 26- and 52-week horizons it comes out around 1.1–1.6.</li>
+            <li>Practical rule: at long horizons you simply do not have much evidence. Say so out
+              loud instead of reporting &ldquo;won 4 of 5 folds&rdquo; as though it were strong.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">26</span><h4 class="slide-t">Don't fool yourself: pre-registration and tiny deltas</h4></div>
+        <div class="msg"><p>If you try forty things, one wins by chance. Decide what counts as a win
+          <em>before</em> you look.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Write down the candidate, the baseline, the horizons, the folds, and the threshold
+              that would make you switch — <b>before</b> scoring. We keep a pre-registration log with
+              the verdict appended after. Most entries read &ldquo;rejected,&rdquo; and that's a
+              healthy log.</li>
+            <li>A challenger beating the champion by under ~2% relative on overlapping folds is a
+              <b>tie</b>, not a win. Eyeballing &ldquo;4 of 5 folds&rdquo; is not evidence.</li>
+            <li>To promote on a small margin, test the per-window differences properly, with
+              overlap-aware error bars. Otherwise keep the incumbent.</li>
+            <li>Corollary: <b>never compare a model scored on one fold design against a model scored
+              on another.</b> Rebuild both on the same folds or don't compare them.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <!-- =============== SECTION 6 =============== -->
+    <section class="band" id="s6">
+      <p class="sec-mark">Section 6</p>
+      <h2>The minimum standard</h2>
+      <p class="sec-sub">Three slides. This is what the session is actually <em>for</em> — everything
+        before it exists to make these three land.</p>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">27</span><h4 class="slide-t">The one-page forecast readout</h4><span class="chip">Core</span></div>
+        <div class="msg"><p>From now on, a forecast isn't finished until this page is attached to it.</p></div>
+        <div class="block">
+          <p class="lbl">Show — print this as a physical handout</p>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Field</th><th>Value</th></tr></thead>
+              <tbody>
+                <tr><td>Horizon</td><td>e.g. 28 days</td></tr>
+                <tr><td>Grain</td><td>e.g. daily, by channel</td></tr>
+                <tr><td>Forecast origin (as-of date)</td><td></td></tr>
+                <tr><td>Model / method</td><td></td></tr>
+                <tr><td><b>Baseline compared against</b></td><td>e.g. seasonal naive lag 364</td></tr>
+                <tr><td>WAPE — yours</td><td></td></tr>
+                <tr><td>WAPE — baseline</td><td></td></tr>
+                <tr><td><b>Skill vs baseline</b></td><td><code>1 &minus; WAPE_yours / WAPE_baseline</code></td></tr>
+                <tr><td>Bias % (state the sign convention)</td><td></td></tr>
+                <tr><td>80% coverage / average width</td><td></td></tr>
+                <tr><td>Backtest design: folds, cutoffs, overlap</td><td></td></tr>
+                <tr><td>Known caveats</td><td>filled dates, excluded rows, events not modeled</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Every field is cheap. None of it needs a new tool.</li>
+            <li>If a field is blank, that's the conversation — not a failure, just the next thing to
+              build.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">28</span><h4 class="slide-t">Maturity ladder: where is your forecast today?</h4></div>
+        <div class="msg"><p>Nobody is expected at level 3 tomorrow. Everyone should know their level
+          and their next step.</p></div>
+        <div class="block">
+          <p class="lbl">Show</p>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Level</th><th>What you have</th><th>Next step</th></tr></thead>
+              <tbody>
+                <tr><td class="num">0</td><td>A number from judgment or a spreadsheet trend. No score.</td><td>Backtest it once. Get a WAPE.</td></tr>
+                <tr><td class="num">1</td><td>Backtested point forecast with WAPE and bias.</td><td>Add a seasonal naive baseline; report skill.</td></tr>
+                <tr><td class="num">2</td><td>Beats baseline, reports bias, ships p10/p50/p90.</td><td>Measure coverage. Fix it if it isn't ~80%.</td></tr>
+                <tr><td class="num">3</td><td>Calibrated intervals, monitoring, a tracked challenger.</td><td>Add new <em>information</em> (covariates) — not new models.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ul>
+            <li>Level 0 → 1 is the single biggest jump in value in this deck, and it takes an afternoon.</li>
+            <li>Note where level 3 points: once you're past the baseline, the lever is <b>new data</b>,
+              not fancier algorithms. That's the durable lesson from our bakeoff.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="slide-head"><span class="slide-n">29</span><h4 class="slide-t">What to do Monday</h4></div>
+        <div class="msg"><p>Three concrete actions, in order, with honest time estimates.</p></div>
+        <div class="block">
+          <p class="lbl">Say</p>
+          <ol>
+            <li><b>Compute your baseline.</b> Pull last year's same-weekday actuals for the period
+              you forecast. Score your forecast and the baseline on the same rows. Report skill.
+              <em>(One afternoon.)</em></li>
+            <li><b>Count your one-sided rate.</b> Over the last 12 months, in what share of periods
+              was your forecast above the actual? If it isn't near 50%, subtract the trailing median
+              error and re-score — then walk the slide 13 table to find out <em>why</em> the offset
+              is there. <em>(One hour for the count, an afternoon for the re-score.)</em></li>
+            <li><b>Build a band</b> from your own backtest errors — p10/p90 by horizon step — and
+              start reporting three numbers instead of one. Measure coverage next quarter.
+              <em>(One day.)</em></li>
+          </ol>
+          <p>Close with the offer: bring your forecast file to the follow-up and we'll do step 1
+            together.</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- =============== SECTION 7 =============== -->
+    <section class="band" id="s7">
+      <p class="sec-mark">Section 7</p>
+      <h2>Workshop material</h2>
+      <p class="sec-sub">Not slides. This is the facilitator's kit — the live demo, the objections
+        you will get, the vocabulary, and the prep list.</p>
+
+      <h3>Live demo script — 10 minutes, do it live if you can</h3>
+      <p>Nothing lands like watching a one-line rule beat a forecast someone defended in a meeting.</p>
+      <ol>
+        <li>Take a real forecast the audience produced, with its origin date and horizon.</li>
+        <li>Pull the actuals for that window, and the actuals from 364 days before each date.</li>
+        <li>On the <b>same rows</b>, compute WAPE and bias for their forecast and for the naive.</li>
+        <li>Show skill: <code>1 &minus; WAPE_theirs / WAPE_naive</code>.</li>
+        <li>Show the <b>third</b> line: their forecast minus its own trailing median error. This is
+          usually the moment the room goes quiet — a forecast nobody re-modelled, just re-centred,
+          that beats the one they defended last quarter.</li>
+        <li>Then take p10/p90 of their errors and show what their 80% band would have been.</li>
+      </ol>
+      <p>Handle the result carefully either way. <b>If naive wins</b>, frame it as &ldquo;this is the
+        bar, and there's a free 20–30% improvement available to you today&rdquo; — not as an
+        indictment; some of the audience built that forecast. <b>If their forecast wins</b>, even
+        better: they now have a defensible claim they never had before, and the readout template
+        lets them keep proving it.</p>
+
+      <h3>Objection handling</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Objection</th><th>Response</th></tr></thead>
+          <tbody>
+            <tr><td>&ldquo;Our business is too volatile to forecast.&rdquo;</td><td>Then quantify the volatility and ship a wide interval. That <em>is</em> the forecast. Volatility is a finding, not a blocker.</td></tr>
+            <tr><td>&ldquo;Naive can't know about our strategy or promos.&rdquo;</td><td>Correct — and it still beats us, which means our strategy knowledge isn't reaching the number. That's a fixable gap, and the highest-value one.</td></tr>
+            <tr><td>&ldquo;Leadership only wants one number.&rdquo;</td><td>They get one: a deliberately chosen quantile. The band goes in the appendix and drives the safety-stock decision.</td></tr>
+            <tr><td>&ldquo;We don't have time to backtest.&rdquo;</td><td>Baseline plus backtest is an afternoon — cheaper than one meeting arguing about whether the forecast is good.</td></tr>
+            <tr><td>&ldquo;Our accuracy is 92%.&rdquo;</td><td>92% by which metric, on which rows, at which horizon, versus which baseline? Usually this is 100 &minus; MAPE at a grain where errors cancel.</td></tr>
+            <tr><td>&ldquo;We already adjust for that manually.&rdquo;</td><td>Good — log the pre- and post-override numbers and let's score the overrides. If they add skill, we'll build them in.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Glossary — define once, then use consistently</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Origin / cutoff</td><td>The as-of date. Nothing after it may be used.</td></tr>
+            <tr><td>Horizon</td><td>How far past the origin you forecast.</td></tr>
+            <tr><td>Grain</td><td>Time bucket plus entity level.</td></tr>
+            <tr><td>Baseline</td><td>The dumb rule you must beat. Default: seasonal naive.</td></tr>
+            <tr><td>Skill</td><td>Percent error reduction versus the baseline.</td></tr>
+            <tr><td>Bias</td><td>Signed average error — the direction of systematic wrongness.</td></tr>
+            <tr><td>WAPE</td><td>Total absolute error ÷ total actual.</td></tr>
+            <tr><td>Coverage</td><td>Share of actuals landing inside your stated interval.</td></tr>
+            <tr><td>Backtest / fold</td><td>One hidden-future test at a single origin.</td></tr>
+            <tr><td>Leakage</td><td>Any post-cutoff information influencing the forecast.</td></tr>
+            <tr><td>Overfitting</td><td>Fitting noise — looks great on history, fails forward.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Facilitator prep checklist</h3>
+      <ul class="check">
+        <li>Pick one real series the audience knows and use it for <b>every</b> chart. Don't switch series mid-deck.</li>
+        <li>Verify the 92% one-sided figure and the room's WAPE yourself before the session, and put
+          both on slides 12–14. Confirm which sign convention their reporting uses, and say it out loud.</li>
+        <li>Run the demo end to end in advance — including the case where their forecast wins.</li>
+        <li>Print the slide 27 readout template as a physical handout.</li>
+        <li>Have the seasonal-naive SQL or Python snippet ready to paste into chat.</li>
+        <li>Do not name individuals or teams next to bad numbers. Frame every symptom as a process defect.</li>
+        <li>Close with the hands-on follow-up offer. The behavior change happens there, not here.</li>
+      </ul>
+    </section>
+
+    <!-- =============== RECEIPTS =============== -->
+    <section class="band" id="receipts">
+      <p class="sec-mark">Presenter notes</p>
+      <h2>Receipts</h2>
+      <p class="sec-sub">Every empirical claim in the deck is grounded in this project's artifacts.
+        If challenged in the room, cite the source.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Claim</th><th>Source</th></tr></thead>
+          <tbody>
+            <tr><td>Six-plus model families lost to seasonal naive</td><td><code>model_cards.md</code>; <code>model_usage_plan.md</code> — current validated winners</td></tr>
+            <tr><td>Weight leakage flipped the verdict at every horizon</td><td><code>model_cards.md</code> 91d/180d/365d multi-fold verdicts; fold-count caveat in <code>model_usage_plan.md</code></td></tr>
+            <tr><td>December fold improved 10.5% → 5.0% WAPE via daily lag-365 reaggregation</td><td><code>model_cards.md</code>, weekly daily-reagg card</td></tr>
+            <tr><td>Weekly 80% interval coverage 0.68–0.77</td><td><code>model_usage_plan.md</code>, interval coverage backtest</td></tr>
+            <tr><td>Nov/Dec residuals run 2–3× the rest of the year</td><td><code>plan.md</code>, current state</td></tr>
+            <tr><td>Effective independent windows ≈1.1–1.6 at 26/52 weeks</td><td><code>model_usage_plan.md</code>, weekly validation</td></tr>
+            <tr><td>Don't sum daily bands into a cumulative band</td><td>Project vault note, July 2026 productionization</td></tr>
+            <tr><td>Sub-aggregate models <em>do</em> beat naive</td><td><code>model_usage_plan.md</code> market-level section; <code>units_forecast/BAKEOFF_SUMMARY.md</code></td></tr>
+            <tr><td>Pre-registration log with mostly-rejected verdicts</td><td><code>plan.md</code>, pre-registration log</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Metric definitions match <code>metrics.py</code> — <code>bias_pct = sum(forecast &minus;
+        actual) / sum(actual)</code> and <code>wape = sum|forecast &minus; actual| / sum|actual|</code>
+        — so anything computed with this repo's tooling lines up with the deck.</p>
+    </section>
+
+  </main>
+
+  <footer class="colophon">
+    <p>Framework only — slide content, not slides. Sections marked <span class="chip">Core</span>
+      form the 25-minute cut; the full sequence runs about 50 minutes with the live demo held for
+      the follow-up workshop.</p>
+  </footer>
+
+</div>

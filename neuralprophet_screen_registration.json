@@ -1,0 +1,57 @@
+{
+  "registration_id": "neuralprophet-28-91-screen-2026-09-25",
+  "registered_at": "2026-09-25",
+  "status": "frozen_before_scoring",
+  "purpose": "Exploratory aggregate-sales NeuralProphet screen; production defaults unchanged.",
+  "data": {
+    "path": "latest_sls_aug.csv",
+    "sha256": "7639a348c80c4068cbebea18464a040525907121480102be0189bb3edd47399e",
+    "columns": ["transaction_date", "sales"],
+    "missing_date_strategy": "error",
+    "target": "daily aggregate sales"
+  },
+  "windows": {
+    "28": {
+      "baseline_grid": "outputs_multifold_28d_aug2026_validation/multifold_grid_predictions.csv",
+      "baseline_grid_sha256": "6df7d769609961bbfd90c7d98560de8557e5a2f3b84b3c20ecd4752e0b33aa70",
+      "cutoffs": ["2026-03-14", "2026-04-11", "2026-05-09", "2026-06-06", "2026-07-04", "2026-08-01"]
+    },
+    "91": {
+      "baseline_grid": "outputs_multifold_91d_aug2026_validation/multifold_grid_predictions.csv",
+      "baseline_grid_sha256": "515871306a068cb88a93fa224ad1aeb9c07937b803592898c53762efd534d89d",
+      "cutoffs": ["2025-11-15", "2025-12-13", "2026-01-10", "2026-02-07", "2026-03-07", "2026-04-04", "2026-05-02", "2026-05-30"]
+    }
+  },
+  "candidates": {
+    "neuralprophet_trend": {
+      "package": "neuralprophet==0.8.0",
+      "n_lags": 0,
+      "epochs": 40,
+      "batch_size": 64,
+      "learning_rate": 0.01,
+      "bias_guardrail": "report_only",
+      "standalone_name": "neuralprophet_trend",
+      "blend_name": "blend_snl75_neuralprophet_trend25"
+    },
+    "neuralprophet_ar": {
+      "package": "neuralprophet==0.8.0",
+      "n_lags": 91,
+      "epochs": 40,
+      "batch_size": 64,
+      "learning_rate": 0.01,
+      "bias_guardrail": "report_only",
+      "standalone_name": "neuralprophet_ar",
+      "blend_name": "blend_snl75_neuralprophet_ar25"
+    }
+  },
+  "execution_contract": {
+    "seed": 42,
+    "feature_recipe": "Target-only daily data through each cutoff, linear trend, automatic changepoints, additive yearly and weekly seasonality, no daily seasonality, no supplied covariates. Direct multi-step autoregression uses the 91 most recent known targets. No future actuals, tuning or fallback.",
+    "first_action": "one latest-cutoff 28-day smoke per configuration",
+    "full_screen_requires": "successful native smoke with the pinned package and finite aligned outputs",
+    "comparison": "Each standalone and fixed 75/25 naive/NeuralProphet blend against seasonal naive and frozen 75/25 naive/TimesFM on identical windows.",
+    "segment_definition": "November/December target dates versus all other target dates, consistent with existing holiday/rest summaries.",
+    "decision_rule": "Historical exploratory screen only. Advance to fresh confirmation when the fixed blend improves mean WAPE against both comparators without a larger worst-window loss than the frozen TimesFM blend; report signed bias and runtime separately. No production change."
+  },
+  "sources_checked": ["https://pypi.org/project/neuralprophet/", "https://neuralprophet.com/code/forecaster.html"]
+}

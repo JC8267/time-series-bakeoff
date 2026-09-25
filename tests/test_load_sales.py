@@ -94,15 +94,31 @@ def test_validation_cache_tracks_timesfm_runtime(monkeypatch) -> None:
             "huggingface-hub": "0.35.3",
             "numpy": "2.0.2",
             "pandas": "2.2.3",
-            "timesfm": "2.0.2",
+            "timesfm": "3.0.0",
             "torch": "2.8.0",
         }[package],
     )
 
     versions = validation_package_versions(["seasonal_naive_lag_364", "timesfm_2_5"])
 
-    assert versions["timesfm"] == "2.0.2"
+    assert versions["timesfm"] == "3.0.0"
     assert versions["torch"] == "2.8.0"
+    assert validation_package_versions(["seasonal_naive_lag_364", "timesfm_3"])["timesfm"] == "3.0.0"
+
+
+def test_timesfm3_default_weights_require_noncommercial_ack(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_multifold_final_validation.py",
+            "--pool",
+            "seasonal_naive_lag_364,timesfm_3",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="prohibit commercial and production use"):
+        validation_main()
 
 
 def test_multifold_validation_reuses_matching_cache(tmp_path, monkeypatch) -> None:

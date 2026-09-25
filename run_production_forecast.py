@@ -35,6 +35,8 @@ MIN_HORIZON = 1
 MAX_HORIZON = 365
 QUANTILE_COLS = ["p025", "p10", "p50", "p90", "p975"]
 QUANTILE_LEVELS = [0.025, 0.10, 0.90, 0.975]
+AGGREGATE_HORIZONS = (180, 365)
+AGGREGATE_QUANTILE_LEVELS = [0.025, 0.10, 0.50, 0.90, 0.975]
 
 
 def seasonal_segment(ds: pd.Series) -> pd.Series:
@@ -44,11 +46,15 @@ def seasonal_segment(ds: pd.Series) -> pd.Series:
 
 def discover_grids() -> dict[int, Path]:
     grids = {}
+    ranks = {}
     for manifest_path in sorted(Path(".").glob("outputs_multifold_*_validation/manifest.json")):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         grid_path = manifest_path.parent / "multifold_grid_predictions.csv"
-        if grid_path.exists():
-            grids[int(manifest["horizon"])] = grid_path
+        horizon = int(manifest["horizon"])
+        rank = (str(manifest.get("training_cutoff", "")), str(manifest.get("created_at", "")))
+        if grid_path.exists() and (horizon not in ranks or rank > ranks[horizon]):
+            grids[horizon] = grid_path
+            ranks[horizon] = rank
     return grids
 
 
@@ -117,6 +123,106 @@ def residual_quantiles(grid_path: Path, interval_windows: int, horizon: int | No
     out["n_windows"] = len(recent_cutoffs)
     out["n_rows"] = len(recent)
     return out
+
+
+def cumulative_terminal_errors(
+    grid_path: Path,
+    horizon: int,
+    interval_windows: int,
+    as_of: pd.Timestamp | None = None,
+    model_name: str = "seasonal_naive_lag_364",
+) -> pd.DataFrame:
+    """Return one completed cumulative error path per recent grid cutoff."""
+    if interval_windows <= 0:
+        raise ValueError("interval_windows must be positive.")
+    preds = pd.read_csv(grid_path, parse_dates=["cutoff", "ds"])
+    preds = preds[(preds["model_name"] == model_name) & preds["horizon_step"].le(horizon)].copy()
+    if as_of is not None:
+        preds = preds[preds["ds"].le(pd.Timestamp(as_of))]
+    if preds.empty:
+        raise ValueError(f"{grid_path} has no completed {horizon}-day calibration paths for {model_name}.")
+
+    paths = []
+    for cutoff, group in preds.groupby("cutoff", sort=True):
+        steps = group.groupby("horizon_step", as_index=False).agg(actual=("actual", "first"), forecast=("forecast", "first"))
+        if len(steps) != horizon or set(steps["horizon_step"]) != set(range(1, horizon + 1)):
+            continue
+        actual_sum = float(steps["actual"].sum())
+        forecast_sum = float(steps["forecast"].sum())
+        error = actual_sum - forecast_sum
+        paths.append(
+            {
+                "cutoff": cutoff,
+                "actual_sum": actual_sum,
+                "forecast_sum": forecast_sum,
+                "cumulative_error": error,
+                "relative_error": error / forecast_sum if forecast_sum else np.nan,
+            }
+        )
+    if not paths:
+        raise ValueError(f"{grid_path} has no complete {horizon}-day calibration paths.")
+    return pd.DataFrame(paths).sort_values("cutoff").tail(interval_windows).reset_index(drop=True)
+
+
+def aggregate_interval_row(
+    grid_path: Path,
+    source_horizon: int,
+    horizon: int,
+    forecast: np.ndarray,
+    training_cutoff: pd.Timestamp,
+    interval_windows: int,
+    interval_mode: str,
+    run_id: str,
+) -> dict:
+    """Calibrate a terminal aggregate interval from historical cumulative paths."""
+    paths = cumulative_terminal_errors(grid_path, horizon, interval_windows, training_cutoff)
+    forecast_sum = float(np.sum(forecast))
+    additive = np.quantile(paths["cumulative_error"].to_numpy(), AGGREGATE_QUANTILE_LEVELS)
+    relative = np.quantile(paths["relative_error"].dropna().to_numpy(), AGGREGATE_QUANTILE_LEVELS)
+    if interval_mode == "additive":
+        selected = forecast_sum + additive
+        calibrated_median = selected[2]
+    elif interval_mode == "relative":
+        selected = forecast_sum * (1.0 + relative)
+        calibrated_median = selected[2]
+    else:
+        raise ValueError("aggregate_interval_mode must be additive or relative.")
+    warnings = [
+        "diagnostic_only_backtest_coverage_below_nominal",
+        "overlapping_calibration_windows",
+        "long_horizon_history_limited",
+    ]
+    if len(paths) < interval_windows:
+        warnings.append(f"only_{len(paths)}_complete_calibration_windows")
+    return {
+        "run_id": run_id,
+        "unique_id": "total_sales",
+        "forecast_origin": training_cutoff,
+        "grain": "aggregate",
+        "horizon": horizon,
+        "source_horizon": source_horizon,
+        "forecast_sum": forecast_sum,
+        "calibrated_median": max(0.0, float(calibrated_median)),
+        "p025": max(0.0, float(selected[0])),
+        "p10": max(0.0, float(selected[1])),
+        "p90": max(0.0, float(selected[3])),
+        "p975": max(0.0, float(selected[4])),
+        "calibration_mode": interval_mode,
+        "interval_method": f"cumulative_terminal_{interval_mode}_quantiles_recent_{len(paths)}_grid_windows",
+        "n_calibration_windows": len(paths),
+        "calibration_grid": str(grid_path),
+        "additive_median_error": float(additive[2]),
+        "additive_p025_error": float(additive[0]),
+        "additive_p10_error": float(additive[1]),
+        "additive_p90_error": float(additive[3]),
+        "additive_p975_error": float(additive[4]),
+        "relative_median_error": float(relative[2]),
+        "relative_p025_error": float(relative[0]),
+        "relative_p10_error": float(relative[1]),
+        "relative_p90_error": float(relative[3]),
+        "relative_p975_error": float(relative[4]),
+        "warning": ";".join(warnings),
+    }
 
 
 def quantiles_for_segment(qs: dict, segment: str, interval_mode: str, shrinkage_k: float) -> np.ndarray:
@@ -236,6 +342,7 @@ def main() -> None:
     parser.add_argument("--horizons", default="28,91,180,365")
     parser.add_argument("--interval-windows", type=int, default=8, help="Most recent multifold grid cutoffs used for residual quantiles.")
     parser.add_argument("--interval-mode", choices=["global", "segment", "shrunken"], default="global")
+    parser.add_argument("--aggregate-interval-mode", choices=["additive", "relative"], default="relative", help="Diagnostic terminal cumulative interval calibration for 180d/365d totals.")
     parser.add_argument("--shrinkage-k", type=float, default=30.0)
     parser.add_argument("--timesfm-context", type=int, default=1024)
     parser.add_argument("--include-challenger", action="store_true", help="Write an exact-horizon TimesFM blend to diagnostic_forecast.csv.")
@@ -250,9 +357,11 @@ def main() -> None:
     grids = discover_grids()
     calibrations = {}
     interval_meta = {}
+    grid_sources: dict[int, tuple[int, Path]] = {}
     challenger_skipped_reasons: dict[str, str] = {}
     for horizon in horizons:
         source_horizon, grid_path = resolve_grid(grids, horizon)
+        grid_sources[horizon] = (source_horizon, grid_path)
         qs = residual_quantiles(grid_path, args.interval_windows, horizon)
         calibrations[horizon] = qs
         interval_meta[str(horizon)] = {
@@ -288,6 +397,7 @@ def main() -> None:
     naive_path = seasonal_naive(df, max_horizon, 364)
     production_rows = []
     challenger_rows = []
+    aggregate_rows = []
     for horizon in horizons:
         qs = calibrations[horizon]
         dates = all_dates.iloc[:horizon]
@@ -315,11 +425,30 @@ def main() -> None:
         )
         production_rows.extend(row for row in horizon_rows if row["model_name"].startswith("final_"))
         challenger_rows.extend(row for row in horizon_rows if row["model_name"].startswith("challenger_"))
+        if horizon in AGGREGATE_HORIZONS:
+            source_horizon, grid_path = grid_sources[horizon]
+            aggregate_rows.append(
+                aggregate_interval_row(
+                    grid_path,
+                    source_horizon,
+                    horizon,
+                    naive,
+                    training_cutoff,
+                    args.interval_windows,
+                    args.aggregate_interval_mode,
+                    run_id,
+                )
+            )
 
     out = pd.DataFrame(production_rows)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     out.to_csv(output_dir / "production_forecast.csv", index=False)
+    aggregate_path = output_dir / "aggregate_forecast_intervals.csv"
+    if aggregate_rows:
+        pd.DataFrame(aggregate_rows).to_csv(aggregate_path, index=False)
+    else:
+        aggregate_path.unlink(missing_ok=True)
     diagnostic_path = output_dir / "diagnostic_forecast.csv"
     if challenger_rows:
         diagnostic = pd.DataFrame(production_rows + challenger_rows)
@@ -352,11 +481,14 @@ def main() -> None:
         "artifacts": {
             "production_forecast": "production_forecast.csv",
             "diagnostic_forecast": "diagnostic_forecast.csv" if challenger_rows else None,
+            "aggregate_forecast_intervals": "aggregate_forecast_intervals.csv" if aggregate_rows else None,
         },
         "blend_naive_weight": BLEND_NAIVE_WEIGHT,
         "interval_windows": args.interval_windows,
         "interval_mode": args.interval_mode,
         "shrinkage_k": args.shrinkage_k if args.interval_mode == "shrunken" else None,
+        "aggregate_interval_mode": args.aggregate_interval_mode,
+        "aggregate_interval_horizons": [h for h in horizons if h in AGGREGATE_HORIZONS],
         "interval_sources": interval_meta,
         "challenger_requested": args.include_challenger,
         "challenger_included": bool(challenger_rows),
@@ -372,6 +504,8 @@ def main() -> None:
     print(summary.to_string(index=False))
     if challenger_rows:
         print(f"Diagnostic forecast: {diagnostic_path}")
+    if aggregate_rows:
+        print(f"Aggregate intervals: {aggregate_path}")
     flagged = {h: units for h, units in planned_openings.items() if units}
     if flagged:
         print("\nCAVEAT: planned openings inside forecast windows are NOT in these forecasts (no identifiable uplift):")

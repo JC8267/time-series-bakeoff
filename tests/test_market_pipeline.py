@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from run_market_bakeoff import load_panel
-from run_production_forecast import build_horizon_rows, grid_model_degradation, main, parse_horizons, resolve_grid
+from run_production_forecast import build_horizon_rows, discover_grids, grid_model_degradation, main, parse_horizons, resolve_grid
 
 
 def test_load_panel_fills_gaps_with_zero_to_common_end(tmp_path) -> None:
@@ -64,6 +64,17 @@ def test_custom_horizon_contract_and_covering_grid() -> None:
         parse_horizons("0,366")
     with pytest.raises(ValueError, match="covers horizon"):
         resolve_grid(grids, 366)
+
+
+def test_grid_discovery_prefers_latest_training_cutoff(tmp_path, monkeypatch) -> None:
+    for name, cutoff in (("old", "2026-04-01"), ("new", "2026-08-29")):
+        output = tmp_path / f"outputs_multifold_28d_{name}_validation"
+        output.mkdir()
+        (output / "manifest.json").write_text(json.dumps({"horizon": 28, "training_cutoff": cutoff}), encoding="utf-8")
+        (output / "multifold_grid_predictions.csv").touch()
+    monkeypatch.chdir(tmp_path)
+
+    assert discover_grids()[28].parent.name == "outputs_multifold_28d_new_validation"
 
 
 def test_degraded_timesfm_grid_is_not_eligible_for_diagnostics(tmp_path) -> None:

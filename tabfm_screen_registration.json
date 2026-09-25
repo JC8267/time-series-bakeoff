@@ -1,0 +1,59 @@
+{
+  "registration_id": "google-tabfm-28d-screen-2026-09-21",
+  "registered_at": "2026-09-21",
+  "status": "frozen_before_scoring",
+  "purpose": "Exploratory Google TabFM 28-day screen; production defaults remain unchanged.",
+  "data": {
+    "path": "latest_sls_aug.csv",
+    "sha256": "7639a348c80c4068cbebea18464a040525907121480102be0189bb3edd47399e",
+    "columns": ["transaction_date", "sales"],
+    "missing_date_strategy": "error",
+    "target": "daily aggregate sales"
+  },
+  "windows": {
+    "28": {
+      "baseline_grid": "outputs_multifold_28d_aug2026_validation/multifold_grid_predictions.csv",
+      "baseline_grid_sha256": "6df7d769609961bbfd90c7d98560de8557e5a2f3b84b3c20ecd4752e0b33aa70",
+      "cutoffs": ["2026-03-14", "2026-04-11", "2026-05-09", "2026-06-06", "2026-07-04", "2026-08-01"]
+    }
+  },
+  "baselines": {
+    "naive": "seasonal_naive_lag_364",
+    "timesfm": "timesfm_2_5",
+    "frozen_timesfm_formula": "0.75 * seasonal_naive_lag_364 + 0.25 * timesfm_2_5"
+  },
+  "candidates": {
+    "tabfm_google": {
+      "package": "tabfm==1.0.1",
+      "source": "google-research/tabfm@d8678b6895f1428a468d4cc299c1ff4cf704e726",
+      "checkpoint": "google/tabfm-1.0.0-pytorch@77cb9cc1b4fd3a9c77fbb9552c218200bb4dab83",
+      "license": "tabfm-non-commercial-v1.0",
+      "license_source": "https://huggingface.co/google/tabfm-1.0.0-pytorch/blob/main/LICENSE",
+      "feature_recipe": "For every complete historical 28-day origin, direct rows use horizon_step, absolute trend_days, target day_of_week/month/day_of_month/day_of_year, target lag_364 sales, and origin trailing 28/91-day means. Prediction rows use the same fields at the registered cutoff. Every target-derived feature date is on or before its row origin; no recursive short lags, supplied covariates, future actuals, tuning, or feature selection.",
+      "context_rows": 256,
+      "n_estimators": 1,
+      "batch_size": 1,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "seed": 42,
+      "standalone_name": "google_tabfm_1_0_0",
+      "blend_name": "blend_snl75_google_tabfm25",
+      "blend_formula": "0.75 * seasonal_naive_lag_364 + 0.25 * google_tabfm_1_0_0",
+      "bias_guardrail": "report_only",
+      "production_eligibility": "blocked_without_separate_commercial_license"
+    }
+  },
+  "execution_contract": {
+    "seed": 42,
+    "first_action": "one 28-day latest-window smoke run",
+    "full_screen_requires": "successful local CUDA smoke with the exact pinned package/checkpoint and no fallback or degraded output",
+    "same_window_requirement": "Candidate dates and actuals must match the registered baseline grid exactly.",
+    "no_tuning": "No weight, feature, context, checkpoint or candidate changes after scoring.",
+    "failure_rule": "Import, license, checkpoint, CUDA, memory, shape, non-finite or date-alignment failures are recorded as blocked/failed and produce no scored candidate row.",
+    "decision_rule": "Advance only as a fresh-confirmation candidate when the fixed 75/25 blend improves mean WAPE versus both naive and the frozen TimesFM blend and its worst-window WAPE loss is no larger than the TimesFM blend's. Report signed bias separately because no business bias tolerance is set; this historical screen cannot justify production."
+  },
+  "sources_checked": [
+    "https://github.com/google-research/tabfm",
+    "https://huggingface.co/google/tabfm-1.0.0-pytorch"
+  ]
+}

@@ -1,7 +1,296 @@
-# Improvement Plan — Time Series Bakeoff (2026-07-02)
+# Improvement Plan — Time Series Bakeoff
 
-Implementation plan for the next round of forecast improvements. Written for an
-implementing agent with no prior context. Read this whole file before starting.
+## Active handoff — 2026-09-08
+
+Status: in progress; items 1 and 2 completed 2026-09-17 and item 3 completed
+2026-09-21. The bounded TabFM 28-day follow-on and requested 91-day extension
+also completed 2026-09-21. Production models remain unchanged. Resume at next
+action 2 below; do not rerun completed work. This section supersedes conflicting
+July instructions and older vault conclusions, including the blanket exclusion
+of new model families. The July workstreams and registration log below remain
+historical context, not an instruction to repeat completed work or commit/push.
+
+### Starting point and scope
+
+- Read `model_usage_plan.md`, `model_cards.md`, `DATA.md`, then the manifests for
+  the runs being compared. Inspect the current working tree before editing;
+  preserve unrelated changes. Use the project `.venv` and `uv` for dependencies.
+- Keep daily `seasonal_naive_lag_364` and weekly
+  `daily_reagg_seasonal_naive_lag_365` as production defaults during experiments.
+- Current evidence supports "tested candidates have not reliably beaten the
+  benchmark", not proof that history-only forecasting has reached a ceiling.
+- Reuse the nested validation, significance, monitoring and experiment-registry
+  tooling. Do not rebuild the pipeline or add a broad hyperparameter search.
+- Keep sales data and absolute sales figures local and gitignored. Report WAPE,
+  bias percentages, coverage and relative improvements in committed documents.
+
+### 1. Repair cumulative-interval validation first — completed 2026-09-17
+
+Completion record: `rolling_intervals` now requires each same-step calibration
+residual's `ds <=` the evaluated cutoff before window selection and minimum-count
+checks. Regression tests pass. Replacement artifact:
+`outputs_cumulative_error_calibration_corrected_20260917` (run_id
+`20260917T143836Z`). At 180d, 13 terminal origins were eligible and observed
+80%/95% coverage was 0.000; at 365d, four observable terminal residuals do not
+exist, so results stop at step 364. The original output is provenance only.
+
+Review `calibrate_cumulative_error_paths.py::rolling_intervals` and its callers.
+The reviewed implementation selects earlier forecast origins but does not require
+their cumulative residuals to be observable at the evaluated origin. Overlapping
+180/365-day windows therefore admit future actuals into calibration.
+
+- At each horizon step, require the calibration residual's `ds <= cutoff` of
+  the evaluated forecast. Apply `recent8`/all-prior selection to eligible
+  residuals, and enforce the minimum calibration count after this filter.
+- Add a regression test with overlapping origins: changing actuals after the
+  evaluated cutoff must not change its calibrated bands. Check the boundary
+  where a residual becomes available and the insufficient-history case.
+- Rerun the existing cumulative calibration design into a new output directory.
+  Mark `outputs_cumulative_error_calibration` as superseded for coverage claims;
+  retain it for provenance. Report eligible windows, coverage and width by step
+  and at the terminal horizon. Do not sum daily interval endpoints.
+- Acceptance: no future residual enters calibration; relevant tests pass;
+  corrected results and limitations are recorded. Sparse long-horizon evidence
+  is a valid limitation, not a reason to relax the availability rule.
+
+### 2. Refresh the existing challengers and reconcile the written plan — completed 2026-09-17
+
+Completion record: `latest_sls_aug.csv` is unchanged through 2026-08-29, so the
+reproduced daily scorecard adds no new 28/91 windows and no post-registration
+180/365 windows are mature. The exact registered weekly 26w pool was refreshed
+on six newly matured origins; its `pool_median` lost to lag-365 (WAPE 0.03658 vs
+0.03511, 2/6 wins, about 1.77 effective windows). Production models are unchanged.
+Artifacts: `outputs_naive_timesfm_challenger_sep2026` and
+`outputs_weekly_multifold_26w_trend_seasonal_refresh_sep2026`. Model cards now
+record the one-fold TimesFM 3 results and non-commercial license restriction;
+the July workstreams below are archived.
+
+- Freeze the existing daily blend at 0.75 seasonal naive + 0.25 TimesFM 2.5.
+  Reuse `explore_naive_beaters.py`, `run_forecast_monitor.py`, and exact validation
+  grids. Score newly available completed windows at 28/91 days; add 180/365-day
+  confirmation only as post-registration windows mature.
+- Refresh the existing weekly 26w trend/seasonal `pool_median` challenger using
+  its exact registered membership. Do not transfer its verdict to other horizons.
+- Reference evidence: `outputs_naive_timesfm_challenger_aug2026` reports daily
+  28d WAPE 0.0582 -> 0.0565 (3/5 wins) and 91d 0.0627 -> 0.0610 (3/3 wins,
+  overlapping). These are tracking results, not a production promotion.
+- Add the August 31 TimesFM 3 results to the model cards: all four summaries in
+  `outputs_multifold_*d_timesfm3_aug2026_test` evaluate just one fold. Standalone
+  TimesFM 3 loses to naive at each horizon; the three-member median improves
+  91d WAPE 0.0531 -> 0.0490. Label this exploratory. Default TimesFM 3 weights
+  currently prohibit commercial/production use; exclude them from this business
+  production shortlist, and do not bypass the existing license guard.
+- Update stale guidance in `time_series_forecasting_bakeoff_plan.md`: inverse-
+  squared WAPE amplifies weight differences; it is not inherently more stable
+  than inverse WAPE. Prefer fixed weights; any learned weights need nested
+  fitting and shrinkage toward the benchmark. Archive completed July tasks.
+- Acceptance: a refreshed, provenance-backed scorecard distinguishes exploration,
+  confirmation and production, with dates, folds, overlap and explicit verdicts.
+
+### 3. Run a small new-model screen at 28/91 days — completed 2026-09-21
+
+Completion record: `new_model_screen_registration.json` froze the data hash,
+28/91 cutoffs, pinned packages/checkpoints, recipes, context limits, fixed blends,
+and keep/reject rule before scoring. The exact TiRex-2 screen is in
+`outputs_new_model_screen_sep2026` (run_id `20260921T143751Z`). Standalone
+TiRex-2 and its fixed 75/25 naive blend were rejected at both horizons: the
+blend scored 0.05852 WAPE at 28d versus 0.05888 naive and 0.05685 for the frozen
+naive/TimesFM blend, and 0.06256 at 91d versus 0.06490 and 0.06084. TiRex-2
+ran locally in an isolated CPU environment; Torch 2.8 required the documented
+`triton-windows==3.4.0.post21` compatibility pin. After the research terms were
+accepted, TabPFN-TS also completed the frozen screen in
+`outputs_new_model_screen_tabpfn_sep2026` (run_id `20260921T155428Z`) using
+local weights and CUDA. Its blend was rejected at both horizons: 0.05671 WAPE
+at 28d beat the 0.05685 TimesFM blend but worsened absolute bias versus naive,
+while 0.06146 at 91d trailed the 0.06084 TimesFM blend. The weights remain
+ineligible for business production without a separate commercial license.
+No degraded or fallback prediction was counted and production defaults are unchanged.
+
+Pre-register exact checkpoints, feature recipes, context limits, data snapshot,
+cutoffs and candidate formulas before scoring. Freeze this candidate set:
+
+| Candidate | Evaluation | Hypothesis |
+|---|---|---|
+| TiRex-2 | Standalone and 0.75 naive + 0.25 TiRex-2 | A recurrent foundation model contributes useful errors different from TimesFM. |
+| TabPFN-TS | Standalone and 0.75 naive + 0.25 TabPFN-TS | Tabular forecasting with a fixed calendar/seasonal feature recipe adds complementary signal. |
+
+- Compare on identical windows against naive and the frozen naive/TimesFM 2.5
+  blend. Measure incremental ensemble value even when a standalone model loses.
+  Do not tune blend weights or add a pooled mega-ensemble after seeing results.
+- Start with one integration smoke run per new model. Verify package/checkpoint
+  terms and local runtime before the full screen; pin working versions. TiRex-2
+  documents Windows Docker support but native installation is tested mainly on
+  Linux/macOS. Keep dependency experiments isolated from the production venv.
+- TabPFN-TS's documented wrapper uses known-future covariates and drops past-only
+  and static covariates. Confirm the pinned version's behavior; never silently
+  claim ignored inputs were evaluated.
+- Existing historical windows are exploration for these new recipes. Freeze
+  survivors before evaluating fresh confirmation windows. Expand to 180/365 days
+  only after a useful short/medium-horizon signal; do not claim transfer.
+- Acceptance: reproducible manifests, no degraded/fallback predictions counted
+  as model successes, same-window scorecards, runtime and explicit keep/reject
+  decisions. A negative result completes the experiment.
+
+### Next actions — ordered by expected information value
+
+1. **Done 2026-09-21: bounded Google TabFM 28-day screen.** A new registration
+   was created without amending the scored TiRex/TabPFN registration. It pinned
+   the source revision, `google/tabfm-1.0.0-pytorch` checkpoint, non-commercial
+   license, seed, 256-row context, one estimator, BF16/CUDA runtime and a direct
+   leak-free calendar/horizon/lag-364/trailing-history recipe. The same six
+   28-day cutoffs and comparators were used. Smoke and full scoring completed in
+   `outputs_new_model_screen_tabfm_sep2026` (run_id
+   `20260921T202918Z`) with no fallback. Standalone TabFM scored 0.06827 mean
+   WAPE and won 2/6 windows versus naive. Its fixed blend improved naive
+   (0.05765 versus 0.05888), had the best median WAPE (0.05405), and much lower
+   absolute mean bias, but lost to the TimesFM blend (0.05685) and had a larger
+   worst-window loss (0.00508 versus 0.00328). It is rejected from fresh
+   confirmation; retain it only for the next error-diversity audit. A separately
+   registered 91-day extension (`outputs_new_model_screen_tabfm_91d_sep2026`,
+   run_id `20260921T204255Z`) reinforced the rejection: standalone WAPE was
+   0.09636, while the blend essentially tied naive (0.064886 versus 0.064897)
+   but trailed TimesFM (0.06084) and had a 0.00723 worst-window loss versus naive.
+2. **Use the existing 28-day predictions to design, not score, confirmation.**
+   Audit paired daily/fold errors for naive, TimesFM and TabPFN, with TabFM kept
+   only as a diagnostic, by horizon step and holiday/rest slice. Freeze the symmetric
+   `0.75 naive + 0.125 TimesFM + 0.125 TabPFN` blend only for future confirmation
+   if the errors are complementary; do not claim a historical win or tune its
+   weights on the six seen windows. Preserve TabPFN's frozen rejection while
+   recording that it was the 28-day WAPE winner and missed only the bias guardrail.
+3. **Run fresh 28-day confirmation when new actuals mature.** Do not rerun the
+   same August snapshot and call it confirmation. Compare the frozen TabPFN and,
+   if it survives exploration, TabFM recipes on new complete non-overlapping
+   windows. Before scoring, obtain a business bias tolerance; absent one, report
+   WAPE leadership and bias separately instead of forcing another binary verdict.
+4. **Then prioritize new information over more model families.** Execute item 4
+   only with versioned, as-of-available market, promotion, closure and opening-
+   maturity inputs. This is more likely to create durable lift than continuing
+   a broad zero-shot model search. If those inputs are unavailable, document the
+   blocker and proceed to the two narrow structural ensembles in item 5.
+5. **Bounded NeuralProphet trial — completed 2026-09-25.**
+   Start with aggregate daily sales at 28 days using the existing rolling
+   cutoffs. Pre-register two configurations: trend/seasonality without
+   autoregression, and the same recipe with autoregression. Freeze package
+   version, seed, lags, training settings, data snapshot and evaluation gates
+   before scoring; keep any tuning inside training folds, with no broad search.
+   Run one local smoke test in an isolated environment (upstream recommends
+   WSL2 on Windows), then reuse existing scoring and registry tooling.
+   Compare each configuration standalone and as a fixed 0.75 seasonal naive +
+   0.25 NeuralProphet blend against seasonal naive and the frozen naive/TimesFM
+   blend on identical windows. Report WAPE, signed bias, worst-window loss,
+   holiday/rest performance and runtime, with no future actuals used as inputs.
+   Treat these historical windows as exploration. Advance to 91 days or shared
+   market modeling only if the screen shows useful incremental value under
+   the evaluation contract below; freeze survivors for fresh confirmation.
+   Known-ahead promotion, closure or opening features require versioned as-of
+   inputs and a separate added-input comparison. Component effects are not
+   causal lift estimates. Record a reproducible verdict even if negative;
+   production defaults remain unchanged.
+   Completion: `neuralprophet_screen_registration.json` froze both configurations
+   and `neuralprophet_ensemble_registration.json` froze three additional blends
+   before the scorecard was read. `outputs_neuralprophet_screen_sep2026` records
+   six 28-day and eight 91-day historical windows, run_id `20260925T140644Z`.
+   Standalone trend and AR models lost at both horizons. The 28-day fixed
+   75/25 naive/trend blend narrowly beat naive/TimesFM (0.05618 vs 0.05685
+   WAPE) and cleared the exploratory gate; retain only for fresh confirmation.
+   The 91-day trend blend and all AR blends failed. A frozen three-member
+   naive/TimesFM/trend blend scored 0.05629 at 28 days but remains diagnostic.
+   Production recommendations did not change.
+   A requested 365-day extension completed on 2026-09-25 using two nearly
+   non-overlapping annual windows and the unchanged recipes. Its artifact is
+   `outputs_neuralprophet_365d_sep2026` (run_id `20260925T141945Z`). Standalone
+   trend and AR scored mean WAPE 0.12407 and 0.23844 versus 0.08518 for naive;
+   both 75/25 naive/NeuralProphet blends lost to naive/TimesFM at 0.07551.
+   This does not evaluate a differently configured team forecasting tool.
+
+TabFM did not clear the registered mean-WAPE/worst-loss gate, but its strong
+median and two standalone fold wins justify only the already bounded error-
+diversity audit in action 2. Do not add another foundation model until fresh
+confirmation or new covariates justify the cost.
+
+### 4. Add information through markets and covariates
+
+Proceed when suitable input data are available; document missing inputs instead
+of substituting realized future information.
+
+- Test Chronos-2 with related market series and/or versioned known-ahead promo
+  plans. This changes the information set from the existing single-series
+  wrapper. Compare target-only and added-input versions on identical folds.
+- Test seasonal naive plus a small pooled CatBoost or LightGBM residual model
+  across markets, using promotions, closures and opening maturity. Reuse existing
+  features and compare with market TimesFM, market naive and pooled LightGBM.
+  Train residual targets from out-of-sample forecasts available at each cutoff;
+  fit preprocessing and any tuning inside the training fold.
+- Treat future opening/promotion schedules as known only if historical as-of
+  versions substantiate that claim. Forecast skill does not establish causal
+  opening or promotion lift; keep attribution work separate.
+- Acceptance: incremental value of the added information is isolated, data
+  availability is documented, and both per-market and aggregate metrics appear.
+
+### 5. Test two narrowly defined structural ensembles
+
+These are follow-on experiments, not prerequisites for the initial screen.
+
+- Weekly-to-daily allocation: use the validated weekly lag-365 reaggregation
+  forecast as the total and allocate with weekday shares estimated only from
+  prior data. Freeze the share-estimation window before scoring. Verify exact
+  weekly coherence and score daily error, holiday slices and weekly totals.
+  This is distinct from the rejected direct daily lag-364/365 blend.
+- Aggregate-anchored market reconciliation: reconcile market TimesFM forecasts
+  to a direct forecast of the same aggregate scope. Start with simple historical
+  shares; defer covariance-based reconciliation until that baseline warrants it.
+  Resolve the documented ~88% market-panel coverage of total sales first, or
+  restrict evaluation to the panel's own aggregate. Do not silently equate targets.
+- Acceptance: exact aggregation identities, no future-derived shares, and gains
+  assessed at both levels without hiding deterioration in component forecasts.
+
+### Evaluation and promotion contract
+
+- Freeze a common data snapshot and explicit origin/date grid. Use only completed
+  inner windows for fitting and calibration; audit missing/synthetic dates.
+- Record mean and median WAPE, signed bias, paired changes versus the incumbent,
+  worst-window loss, holiday/rest performance, interval coverage/width and runtime.
+  Report WAPE percentage-point changes separately from relative improvement.
+- Before confirmation, record horizon-specific minimum useful WAPE improvement,
+  maximum acceptable bias/worst-window regression, interval and runtime limits.
+  These business thresholds remain to be set; absent them, report evidence and
+  retain the incumbent rather than inventing promotion criteria after scoring.
+- Retain paired HAC and moving-block-bootstrap evidence, disclose overlap and
+  the approximate effective window count, and treat tiny long-horizon samples
+  as inconclusive. Account for multiple candidate/horizon comparisons with a
+  declared correction or a separately frozen fresh-confirmation stage.
+- Promote per horizon only when statistical evidence, practical thresholds and
+  operational requirements pass. Do not require a candidate to win every horizon.
+- After code changes, run relevant regression tests and the full project suite
+  before handoff. Update `model_cards.md` and `model_usage_plan.md`; rebuild
+  `RUN_INDEX.md` after new runs. Record each recipe and verdict in the registration
+  log. Do not commit/push unrelated working-tree changes.
+
+### Handoff deliverables
+
+1. Corrected cumulative-interval code, tests and replacement coverage artifacts.
+2. Refreshed daily/weekly challenger scorecards and current model documentation.
+3. Registered TiRex-2/TabPFN-TS and Google TabFM screens with keep/reject decisions.
+4. Market/covariate and structural-ensemble results, or explicit data blockers;
+   bounded NeuralProphet screen registration, scorecard and verdict.
+5. A final per-horizon recommendation listing evidence, remaining uncertainty,
+   practical thresholds and whether any production change is justified.
+
+References checked during the review (recheck versions/terms before execution):
+[TimesFM](https://github.com/google-research/timesfm),
+[TiRex-2](https://github.com/NX-AI/tirex-2),
+[TabPFN-TS](https://github.com/PriorLabs/tabpfn-time-series),
+[TabFM](https://github.com/google-research/tabfm),
+[NeuralProphet](https://github.com/ourownstory/neural_prophet),
+[Chronos-2](https://github.com/amazon-science/chronos-forecasting).
+
+---
+
+## Archived July 2026 plan
+
+Status: completed and archived. The workstreams below are retained only for
+recipe and decision provenance; do not execute their imperative steps. Use the
+active September handoff above for current work.
 
 ## Required reading (in order)
 
@@ -429,3 +718,10 @@ Record candidates and their exact definitions BEFORE scoring; append verdicts af
   lag 365 shifts the weekday pattern, and equal blending preserves too much of
   that error. Keep lag 365 only for the validated daily-to-weekly reaggregation
   workflow; do not add this blend to production.
+- 2026-09-17: refreshed the pre-registered weekly 26w `pool_median` using the
+  exact six-member pool from
+  `outputs_weekly_multifold_26w_trend_seasonal_pool/manifest.json`. On six newly
+  matured, heavily overlapping origins (2025-10-08 through 2026-02-25), it lost
+  to `daily_reagg_seasonal_naive_lag_365`: WAPE 0.03658 vs 0.03511, 2/6 wins,
+  mean difference +0.00147, worst loss +0.00478. Verdict: confirmation failed;
+  retain lag-365 in production and keep the packaged pool median diagnostic only.

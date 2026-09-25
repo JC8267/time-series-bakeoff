@@ -23,19 +23,25 @@ def main() -> None:
 
     root = Path(args.root)
     rows = []
-    for output_dir in sorted(root.glob("outputs*")):
-        if not output_dir.is_dir():
+    for output_root in sorted(root.glob("outputs*")):
+        if not output_root.is_dir():
             continue
-        manifest = load_manifest(output_dir)
-        rows.append(
-            {
-                "dir": output_dir.name,
-                "created_at": manifest.get("created_at", ""),
-                "horizons": ",".join(str(h) for h in manifest.get("horizons", [])) if isinstance(manifest.get("horizons"), list) else "",
-                "models": len(manifest.get("models", [])) if isinstance(manifest.get("models"), list) else "",
-                "training_cutoff": manifest.get("training_cutoff", ""),
-            }
-        )
+        output_dirs = [output_root]
+        if not load_manifest(output_root):
+            output_dirs = sorted(
+                {path.parent for name in ["manifest.json", "phase6_manifest.json", "phase5_manifest.json"] for path in output_root.rglob(name)}
+            )
+        for output_dir in output_dirs:
+            manifest = load_manifest(output_dir)
+            rows.append(
+                {
+                    "dir": output_dir.relative_to(root).as_posix(),
+                    "created_at": manifest.get("created_at", ""),
+                    "horizons": ",".join(str(h) for h in manifest.get("horizons", [])) if isinstance(manifest.get("horizons"), list) else "",
+                    "models": len(manifest.get("models", [])) if isinstance(manifest.get("models"), list) else "",
+                    "training_cutoff": manifest.get("training_cutoff", ""),
+                }
+            )
 
     lines = [
         "# Run Index",
@@ -53,4 +59,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,4 +1,4 @@
-"""Benchmark Prophet + TimesFM 2.5 and simple ensembles against holdout windows."""
+"""Benchmark Prophet + TimesFM candidates and simple ensembles against holdout windows."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from run_bakeoff import load_sales, score_group, set_seeds
 
 if not hasattr(np, "float_"):
     np.float_ = np.float64
+
+TIMESFM3_MODEL_ID = "google/timesfm-3.0-pytorch"
 
 
 def load_timesfm(max_context: int, max_horizon: int):
@@ -38,6 +40,16 @@ def load_timesfm(max_context: int, max_horizon: int):
         )
     )
     return model
+
+
+def load_timesfm3(model_id: str = TIMESFM3_MODEL_ID):
+    import torch
+    from timesfm3 import ModelConfig, TimesFM3Evaluator
+
+    torch.set_float32_matmul_precision("high")
+    return TimesFM3Evaluator(
+        ModelConfig(checkpoint_path=model_id, per_core_batch_size=1)
+    )
 
 
 def load_chronos_bolt(model_id: str = "amazon/chronos-bolt-small"):
@@ -78,6 +90,31 @@ def forecast_timesfm(model, train: pd.DataFrame, horizon: int, max_context: int)
     else:
         out[["p025", "p10", "p50", "p90", "p975"]] = np.nan
         out["p50"] = forecast
+    return out
+
+
+def forecast_timesfm3(model, train: pd.DataFrame, horizon: int, max_context: int) -> pd.DataFrame:
+    y = train["y"].astype(float).to_numpy()
+    ctx = y[-min(len(y), max_context) :].astype(np.float32, copy=False)
+    result = next(
+        model.predict_batch(
+            contexts=[ctx],
+            horizon=horizon,
+            return_quantiles=True,
+            use_symmetric_averaging=False,
+        )
+    )
+    forecast = np.asarray(result.forecast, dtype=float)[:horizon]
+    out = pd.DataFrame({"forecast": forecast})
+    q = np.asarray(result.quantiles, dtype=float) if result.quantiles is not None else None
+    if q is not None and q.ndim == 2 and q.shape[1] >= 9:
+        out["p10"] = q[:horizon, 0]
+        out["p50"] = q[:horizon, 4]
+        out["p90"] = q[:horizon, 8]
+    else:
+        out[["p10", "p50", "p90"]] = np.nan
+        out["p50"] = forecast
+    out[["p025", "p975"]] = np.nan
     return out
 
 
@@ -198,11 +235,25 @@ def run(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = load_sales(Path(args.sales_csv))
     horizons = [int(x) for x in args.horizons.split(",")]
     requested_models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if (
+        "timesfm_3" in requested_models
+        and args.tfm3_model_id == TIMESFM3_MODEL_ID
+        and not args.allow_noncommercial_timesfm3
+    ):
+        raise ValueError(
+            "The default TimesFM 3 weights prohibit commercial and production use. "
+            "Use --allow-noncommercial-timesfm3 only for a qualifying non-commercial run."
+        )
     try:
         tfm = load_timesfm(args.tfm_max_context, max(horizons)) if "timesfm_2_5" in requested_models else None
     except Exception as exc:
         print(f"Skipping TimesFM: {exc}")
         tfm = None
+    try:
+        tfm3 = load_timesfm3(args.tfm3_model_id) if "timesfm_3" in requested_models else None
+    except Exception as exc:
+        print(f"Skipping TimesFM 3: {exc}")
+        tfm3 = None
     try:
         chronos = load_chronos_bolt(args.chronos_model_id) if "chronos_bolt_small" in requested_models else None
     except Exception as exc:
@@ -225,6 +276,13 @@ def run(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
             started = time.perf_counter()
             timesfm_fcst = forecast_timesfm(tfm, train, horizon, args.tfm_max_context)
             timesfm_runtime = time.perf_counter() - started
+
+        timesfm3_fcst = None
+        timesfm3_runtime = 0.0
+        if tfm3 is not None:
+            started = time.perf_counter()
+            timesfm3_fcst = forecast_timesfm3(tfm3, train, horizon, args.tfm_max_context)
+            timesfm3_runtime = time.perf_counter() - started
 
         chronos_fcst = None
         chronos_runtime = 0.0
@@ -250,6 +308,8 @@ def run(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
             models["prophet_timesfm_mean"] = (weighted_ensemble(prophet_fcst, timesfm_fcst, (0.5, 0.5)), 0.0)
             models["prophet_timesfm_weighted_30_70"] = (weighted_ensemble(prophet_fcst, timesfm_fcst, (0.3, 0.7)), 0.0)
             models["prophet_timesfm_weighted_70_30"] = (weighted_ensemble(prophet_fcst, timesfm_fcst, (0.7, 0.3)), 0.0)
+        if timesfm3_fcst is not None:
+            models["timesfm_3"] = (timesfm3_fcst, timesfm3_runtime)
         if chronos_fcst is not None:
             models["chronos_bolt_small"] = (chronos_fcst, chronos_runtime)
             models["prophet_chronos_bolt_mean"] = (weighted_ensemble(prophet_fcst, chronos_fcst, (0.5, 0.5)), 0.0)
@@ -288,7 +348,7 @@ def write_outputs(preds: pd.DataFrame, metrics: pd.DataFrame, output_dir: Path) 
     except Exception:
         pass
     lines = [
-        "# Prophet + TimesFM 2.5 Holdout Benchmark",
+        "# Prophet + TimesFM Holdout Benchmark",
         "",
         f"Created at: {datetime.now(timezone.utc).isoformat()}",
         "",
@@ -311,6 +371,8 @@ def main() -> None:
     parser.add_argument("--sales-csv", default="daily_sales_data.csv")
     parser.add_argument("--horizons", default="28,91")
     parser.add_argument("--tfm-max-context", type=int, default=1024)
+    parser.add_argument("--tfm3-model-id", default=TIMESFM3_MODEL_ID)
+    parser.add_argument("--allow-noncommercial-timesfm3", action="store_true")
     parser.add_argument("--chronos-max-context", type=int, default=2048)
     parser.add_argument("--chronos-model-id", default="amazon/chronos-bolt-small")
     parser.add_argument("--chronos2-max-context", type=int, default=8192)

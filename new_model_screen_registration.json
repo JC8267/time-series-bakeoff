@@ -1,0 +1,72 @@
+{
+  "registration_id": "new-model-screen-2026-09-17",
+  "registered_at": "2026-09-17",
+  "status": "frozen_before_scoring",
+  "purpose": "Exploratory 28/91-day screen; production defaults remain unchanged.",
+  "data": {
+    "path": "latest_sls_aug.csv",
+    "sha256": "7639a348c80c4068cbebea18464a040525907121480102be0189bb3edd47399e",
+    "columns": ["transaction_date", "sales"],
+    "missing_date_strategy": "error",
+    "target": "daily aggregate sales"
+  },
+  "windows": {
+    "28": {
+      "baseline_grid": "outputs_multifold_28d_aug2026_validation/multifold_grid_predictions.csv",
+      "baseline_grid_sha256": "6df7d769609961bbfd90c7d98560de8557e5a2f3b84b3c20ecd4752e0b33aa70",
+      "cutoffs": ["2026-03-14", "2026-04-11", "2026-05-09", "2026-06-06", "2026-07-04", "2026-08-01"]
+    },
+    "91": {
+      "baseline_grid": "outputs_multifold_91d_aug2026_validation/multifold_grid_predictions.csv",
+      "baseline_grid_sha256": "515871306a068cb88a93fa224ad1aeb9c07937b803592898c53762efd534d89d",
+      "cutoffs": ["2025-11-15", "2025-12-13", "2026-01-10", "2026-02-07", "2026-03-07", "2026-04-04", "2026-05-02", "2026-05-30"]
+    }
+  },
+  "baselines": {
+    "naive": "seasonal_naive_lag_364",
+    "timesfm": "timesfm_2_5",
+    "frozen_timesfm_formula": "0.75 * seasonal_naive_lag_364 + 0.25 * timesfm_2_5"
+  },
+  "candidates": {
+    "tirex_2": {
+      "package": "tirex-2==0.2.1",
+      "checkpoint": "NX-AI/TiRex-2@05e5b26db52bfb256f1ae1bdf785589850482de3",
+      "license": "Apache-2.0",
+      "license_source": "https://github.com/NX-AI/tirex-2/blob/main/LICENSE",
+      "feature_recipe": "Univariate target history only; no covariates; use native 0.5 quantile as point forecast; clip final forecast at zero.",
+      "context_limit": 2048,
+      "native_horizon_limit": 320,
+      "standalone_name": "tirex_2",
+      "blend_name": "blend_snl75_tirex25",
+      "blend_formula": "0.75 * seasonal_naive_lag_364 + 0.25 * tirex_2"
+    },
+    "tabpfn_ts": {
+      "package": "tabpfn-time-series==1.2.0",
+      "runtime_packages": ["tabpfn==9.0.0", "tabpfn-client==0.6.0"],
+      "checkpoint": "Prior-Labs/tabpfn_3_5@06bf2ba35c80a92a3b9abb436b99cf49e7a0365e",
+      "license": "tabpfn-3-5-license-v1.0 (non-commercial weights; separate production license required)",
+      "license_source": "https://huggingface.co/Prior-Labs/tabpfn_3_5/blob/main/LICENSE",
+      "feature_recipe": "Local mode only; univariate target history plus package defaults RunningIndexFeature, CalendarFeature, AutoSeasonalFeature; no supplied covariates; median output; clip final forecast at zero. Past-only and static covariates are intentionally absent because the wrapper drops them.",
+      "context_limit": 32768,
+      "standalone_name": "tabpfn_ts_3_5",
+      "blend_name": "blend_snl75_tabpfn25",
+      "blend_formula": "0.75 * seasonal_naive_lag_364 + 0.25 * tabpfn_ts_3_5",
+      "production_eligibility": "blocked_without_separate_commercial_license"
+    }
+  },
+  "execution_contract": {
+    "seed": 42,
+    "first_action": "one 28-day latest-window smoke run per model",
+    "full_screen_requires": "successful native model smoke with exact pinned package/checkpoint, no fallback or degraded output",
+    "same_window_requirement": "Candidate dates and actuals must match the registered baseline grid exactly.",
+    "no_tuning": "No weight, feature, context, checkpoint or candidate changes after scoring.",
+    "failure_rule": "Import, authentication, license, checkpoint, compiler, memory, shape, non-finite or date-alignment failures are recorded as blocked/failed and produce no scored candidate row.",
+    "decision_rule": "Keep only as a confirmation candidate when its fixed 75/25 blend improves mean WAPE versus both naive and the frozen TimesFM blend at a horizon without worse absolute mean bias or a larger worst-window WAPE loss. Otherwise reject. Existing historical windows remain exploration only."
+  },
+  "sources_checked": [
+    "https://github.com/NX-AI/tirex-2",
+    "https://huggingface.co/NX-AI/TiRex-2",
+    "https://github.com/PriorLabs/tabpfn-time-series",
+    "https://huggingface.co/Prior-Labs/tabpfn_3_5"
+  ]
+}

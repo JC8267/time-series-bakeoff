@@ -100,7 +100,7 @@ def default_output_dir(horizon: int, grain: str) -> Path:
 
 def validation_package_versions(pool: list[str]) -> dict[str, str | None]:
     packages = {"numpy", "pandas"}
-    if "timesfm_2_5" in pool:
+    if any(name in pool for name in ("timesfm_2_5", "timesfm_3")):
         packages.update({"huggingface-hub", "timesfm", "torch"})
     if any(name in pool for name in ("chronos_bolt_small", "chronos2", "daily_reagg_chronos2")):
         packages.update({"chronos-forecasting", "huggingface-hub", "torch"})
@@ -130,7 +130,7 @@ def validation_cache_signature(args: argparse.Namespace, pool: list[str]) -> dic
         source_dir / "run_phase3.py",
         source_dir / "requirements.txt",
     ]
-    if any(name in pool for name in ("timesfm_2_5", "chronos_bolt_small", "chronos2", "daily_reagg_chronos2")):
+    if any(name in pool for name in ("timesfm_2_5", "timesfm_3", "chronos_bolt_small", "chronos2", "daily_reagg_chronos2")):
         code_paths.append(source_dir / "run_prophet_timesfm_benchmark.py")
     return {
         "version": 2,
@@ -142,6 +142,7 @@ def validation_cache_signature(args: argparse.Namespace, pool: list[str]) -> dic
         "max_grid_cutoffs": args.max_grid_cutoffs,
         "pool": pool,
         "timesfm_context": args.timesfm_context,
+        "timesfm3_model_id": args.timesfm3_model_id,
         "chronos_context": args.chronos_context,
         "missing_date_strategy": args.missing_date_strategy,
         "sales_csv": str(sales_path),
@@ -205,6 +206,7 @@ def make_predictors(
     grain: str = DAILY_GRAIN,
     weekly_freq: str = DEFAULT_WEEKLY_FREQ,
     daily_history: pd.DataFrame | None = None,
+    timesfm3_model_id: str = "google/timesfm-3.0-pytorch",
 ) -> dict:
     grain = normalize_grain(grain)
     predictors = {}
@@ -297,6 +299,11 @@ def make_predictors(
 
             model = load_timesfm(timesfm_context, horizon)
             predictors[name] = lambda train, h, m=model: forecast_timesfm(m, train, h, timesfm_context)["forecast"].to_numpy()
+        elif name == "timesfm_3":
+            from run_prophet_timesfm_benchmark import forecast_timesfm3, load_timesfm3
+
+            model = load_timesfm3(timesfm3_model_id)
+            predictors[name] = lambda train, h, m=model: forecast_timesfm3(m, train, h, timesfm_context)["forecast"].to_numpy()
         elif name == "chronos_bolt_small":
             from run_prophet_timesfm_benchmark import forecast_chronos_bolt, load_chronos_bolt
 
@@ -653,6 +660,8 @@ def main() -> None:
     parser.add_argument("--grid-step", type=int, default=None)
     parser.add_argument("--pool", default=None, help="Comma-separated custom pool. Omit to run the full offline candidate pool and ensembles.")
     parser.add_argument("--timesfm-context", type=int, default=1024)
+    parser.add_argument("--timesfm3-model-id", default="google/timesfm-3.0-pytorch")
+    parser.add_argument("--allow-noncommercial-timesfm3", action="store_true")
     parser.add_argument("--chronos-context", type=int, default=2048)
     parser.add_argument("--max-grid-cutoffs", type=int, default=None, help="Limit grid to the most recent N cutoffs (smoke tests).")
     parser.add_argument("--opening-info", default=None, help="Optional unit-opening CSV; required for opening-aware pool models like sklearn_extra_trees.")
@@ -671,6 +680,15 @@ def main() -> None:
     default_pool = WEEKLY_DEFAULT_POOL if args.grain == WEEKLY_GRAIN else DEFAULT_POOL
     pool_text = args.pool if args.pool is not None else ",".join(default_pool)
     pool = [m.strip() for m in pool_text.split(",") if m.strip()]
+    if (
+        "timesfm_3" in pool
+        and args.timesfm3_model_id == "google/timesfm-3.0-pytorch"
+        and not args.allow_noncommercial_timesfm3
+    ):
+        raise ValueError(
+            "The default TimesFM 3 weights prohibit commercial and production use. "
+            "Use --allow-noncommercial-timesfm3 only for a qualifying non-commercial run."
+        )
     args.run_mode = "offline_custom_pool_validation" if args.pool is not None else "offline_full_pool_validation"
     benchmark = benchmark_for_grain(args.grain)
     if benchmark not in pool:
@@ -712,6 +730,7 @@ def main() -> None:
         args.grain,
         args.weekly_freq,
         daily_history,
+        args.timesfm3_model_id,
     )
     grid_preds = run_grid(df, grid, args.horizon, predictors, args.grain)
     # Persist the expensive grid immediately so a fold-stage failure cannot lose it.

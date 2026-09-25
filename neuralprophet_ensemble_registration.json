@@ -1,0 +1,13 @@
+{
+  "registration_id": "neuralprophet-ensembles-2026-09-25",
+  "registered_at": "2026-09-25",
+  "status": "frozen_before_scoring",
+  "source_screen": "neuralprophet_screen_registration.json",
+  "source_screen_sha256": "bdc2fd5c9405d51c8f81cf40ff178df727950d5e9a99eb0d4acc4cde8aa96e9f",
+  "formulas": {
+    "blend_snl75_np_trend_ar125": {"seasonal_naive_lag_364": 0.75, "neuralprophet_trend": 0.125, "neuralprophet_ar": 0.125},
+    "blend_snl75_tfm125_np_trend125": {"seasonal_naive_lag_364": 0.75, "timesfm_2_5": 0.125, "neuralprophet_trend": 0.125},
+    "blend_snl75_tfm125_np_ar125": {"seasonal_naive_lag_364": 0.75, "timesfm_2_5": 0.125, "neuralprophet_ar": 0.125}
+  },
+  "decision_rule": "Same historical windows are diagnostic only. Compare mean WAPE, signed bias and worst-window loss with seasonal naive and the frozen 75/25 naive/TimesFM blend. No weight tuning or production promotion from this screen."
+}

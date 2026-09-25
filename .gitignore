@@ -9,10 +9,14 @@ experiments.csv
 
 # Business data — keep local only, never push
 daily_sales_data.csv
+latest_sls_aug.csv
 opening_info.csv
 complete_opening_info.csv
 bu_level_sls.csv
 by_offer/raw_data.csv
+units_forecast/units_raw.csv
+sls_units.csv
+amzn/item_level.csv
 
 # Generated run outputs and work dirs (contain absolute sales figures)
 outputs*/
@@ -25,6 +29,7 @@ cas_request/
 new_opening_incremental/
 new_units_incremental*/
 *.log
+tmp/
 
 # Model artifacts
 autogluon_models/

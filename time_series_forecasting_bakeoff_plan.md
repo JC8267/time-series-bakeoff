@@ -936,19 +936,20 @@ Often robust to one model going off the rails.
 
 Weight models by historical backtest performance.
 
-Plain inverse-WAPE weighting is unstable — when several models cluster around the same WAPE they get near-equal weights and outliers get crushed. Use one of these stabler alternatives:
+Performance-weighted ensembles are unstable when they are learned from a small or overlapping validation sample. Inverse-squared WAPE amplifies weight differences more than plain inverse WAPE; it is not inherently more stable. Prefer pre-registered fixed weights when evidence is limited. If weights are learned, fit them inside each nested validation fold and shrink them toward the benchmark.
 
 ```text
-Option A: inverse-squared WAPE
-    weight_i = 1 / WAPE_i^2
+Option A: fixed weights (recommended when confirmation data are sparse)
+    Freeze weights before scoring the confirmation windows.
 
-Option B: softmax over negative WAPE with temperature tau
+Option B: softmax over negative WAPE with temperature tau (diagnostic)
     weight_i = exp(-WAPE_i / tau) / sum(exp(-WAPE_j / tau))
     tau controls how peaked the weighting is
 
-Option C: constrained convex stacking (recommended)
+Option C: constrained convex stacking
     Solve weights >= 0, sum(weights) = 1 minimizing
     WAPE of the weighted combination on a held-out window.
+    Fit inside nested validation and shrink weights toward the benchmark.
     Use scipy.optimize.minimize with SLSQP.
 ```
 

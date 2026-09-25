@@ -127,6 +127,19 @@ def load_manifest(forecast_csv: Path) -> dict[str, Any]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
+def resolve_forecast_csv(forecast_csv: Path) -> Path:
+    """Use the packaged diagnostic file when monitoring a final-only package."""
+    manifest = load_manifest(forecast_csv)
+    artifacts = manifest.get("artifacts", {})
+    production_name = artifacts.get("production_forecast")
+    diagnostic_name = artifacts.get("diagnostic_forecast")
+    if production_name and diagnostic_name and forecast_csv.name == Path(production_name).name:
+        diagnostic_path = forecast_csv.parent / diagnostic_name
+        if diagnostic_path.exists():
+            return diagnostic_path
+    return forecast_csv
+
+
 def realized_forecasts(forecast_csv: Path, sales_csv: Path, weekly_freq: str = DEFAULT_WEEKLY_FREQ) -> tuple[pd.DataFrame, dict[str, Any], str]:
     forecast = pd.read_csv(forecast_csv)
     forecast["ds"] = pd.to_datetime(forecast["ds"])
@@ -252,7 +265,7 @@ def monitor_row_key(record: dict[str, Any]) -> tuple[str, ...]:
         "horizon": horizon,
         "grain": str(grain).lower(),
     }
-    key_cols = ["source_run_id", "row_type", "model_name", "comparison_model", "horizon", "grain", "evaluation_window"]
+    key_cols = ["source_run_id", "row_type", "model_name", "comparison_model", "horizon", "grain", "evaluation_window", "rows"]
     return tuple("" if pd.isna(values.get(col, "")) else str(values.get(col, "")) for col in key_cols)
 
 
@@ -385,7 +398,8 @@ def main() -> None:
     args = parser.parse_args()
 
     set_seeds()
-    forecast_csv = Path(args.forecast_csv)
+    requested_forecast_csv = Path(args.forecast_csv)
+    forecast_csv = resolve_forecast_csv(requested_forecast_csv)
     log_csv = Path(args.log_csv)
     realized, manifest, grain = realized_forecasts(forecast_csv, Path(args.sales_csv), args.weekly_freq)
     row_run_ids = realized["run_id"].dropna().astype(str).unique().tolist() if "run_id" in realized else []
@@ -401,6 +415,7 @@ def main() -> None:
     run_manifest = {
         "run_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "requested_forecast_csv": str(requested_forecast_csv),
         "forecast_csv": str(forecast_csv),
         "sales_csv": args.sales_csv,
         "source_run_id": source_run_id,
@@ -418,6 +433,8 @@ def main() -> None:
 
     print(f"Realized rows: {len(realized)}")
     print(f"Rows appended: {appended}")
+    if forecast_csv != requested_forecast_csv:
+        print(f"Challenger diagnostics: {forecast_csv}")
     if any(model["alarm"] for model in alarm_state["models"]):
         print("WARNING [monitor]: bias CUSUM alarm fired. See alarm_state.json.")
 

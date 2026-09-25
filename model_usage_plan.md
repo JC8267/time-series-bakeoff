@@ -1,8 +1,14 @@
 # Forecasting and Counterfactual Model Usage Plan
 
-Last updated: 2026-07-23
+Last updated: 2026-09-25 (NeuralProphet 365-day check; production recommendations unchanged)
 
 This document describes which validated models and ensembles to use for different project types, and how to implement each workflow with the current bakeoff pipeline.
+
+The active implementation handoff is [Active handoff — 2026-09-08](plan.md#active-handoff--2026-09-08).
+Items 1-3 completed cumulative-interval leakage repair, refreshed challenger
+evidence and the bounded TiRex-2/TabPFN-TS screen. Follow-on market/covariate
+and structural ensembles remain planned. These experiments do not change the
+validated production defaults below.
 
 ## Current Validated Winners
 
@@ -50,15 +56,30 @@ Latest rerun artifacts:
 | Weekly 26w extended trend significance pool | `outputs_weekly_multifold_26w_trend_seasonal_extended_pool` |
 | Overlap-aware significance tests | `outputs_forecast_significance_tests` |
 | Interval coverage backtest | `outputs_interval_coverage_backtest` |
+| Leak-free cumulative long-horizon interval calibration | `outputs_cumulative_error_calibration_corrected_20260917` |
 | Weekly production package | `outputs_weekly_production_forecast` |
 | Holiday-anchor validation | `outputs_multifold_*d_holiday_anchor_pool`, `outputs_weekly_multifold_*w_holiday_anchor_pool`, `outputs_forecast_significance_tests_holiday_anchor` |
 | Interval shrinkage sweeps | `outputs_interval_coverage_backtest_shrunken_k10`, `outputs_interval_coverage_backtest_shrunken_k30`, `outputs_interval_coverage_backtest_shrunken_k60`, `outputs_interval_coverage_backtest_global_w16`, `outputs_interval_coverage_backtest_global_all` |
 | Residual covariate harness | `outputs_residual_covariate_model`, `outputs_forecast_significance_tests_residual_covariates` |
 | Forecast monitor | `outputs_forecast_monitor` |
+| 28/91 fixed naive/TimesFM holdout grids | `outputs_multifold_28d_aug2026_validation`, `outputs_multifold_91d_aug2026_validation` |
+| Fixed naive/TimesFM challenger scorecard | `outputs_naive_timesfm_challenger_aug2026` |
+| Reproduced fixed naive/TimesFM scorecard | `outputs_naive_timesfm_challenger_sep2026` (run_id `20260917T143946Z`) |
+| Refreshed weekly 26w exact trend/seasonal pool | `outputs_weekly_multifold_26w_trend_seasonal_refresh_sep2026` (run_id `20260917T143838Z`) |
+| TimesFM 3 one-fold exploratory screen | `outputs_multifold_*d_timesfm3_aug2026_test` |
+| TiRex-2 registered 28/91-day screen | `outputs_new_model_screen_sep2026` (run_id `20260921T143751Z`) |
+| TabPFN-TS registered 28/91-day screen | `outputs_new_model_screen_tabpfn_sep2026` (run_id `20260921T155428Z`) |
+| Google TabFM registered 28-day screen | `outputs_new_model_screen_tabfm_sep2026` (run_id `20260921T202918Z`) |
+| Google TabFM registered 91-day extension | `outputs_new_model_screen_tabfm_91d_sep2026` (run_id `20260921T204255Z`) |
+| NeuralProphet registered 28/91-day screen and frozen ensembles | `outputs_neuralprophet_screen_sep2026` (run_id `20260925T140644Z`) |
+| NeuralProphet registered two-window 365-day check | `outputs_neuralprophet_365d_sep2026` (run_id `20260925T141945Z`) |
+| Refreshed 28/91 production + diagnostic package | `outputs_production_forecast_aug2026` |
+| Realized 2026-04-01 forecast adjudication | `outputs_forecast_monitor_aug2026` |
 | Rejected daily lag-364/lag-365 calendar blend | `outputs_multifold_*d_calendar_blend_pool`, `outputs_forecast_significance_tests_calendar_blend` |
 
 Artifact notes:
 
+- `outputs_cumulative_error_calibration_corrected_20260917` supersedes `outputs_cumulative_error_calibration` for cumulative-interval coverage claims; the old directory is retained only for provenance. The corrected calibration admits a same-step residual only once its `ds` is on or before the evaluated origin, then applies the recent-8/all-prior window and minimum-count rule. At 180 days, all four method/window variants had 0.000 terminal 80% and 95% coverage across 13 eligible origins; mean terminal 80% widths were 5.1%-8.9% of cumulative actuals and 95% widths were 6.1%-10.3%. At 365 days, no terminal origin had the required four observable prior residuals, so no terminal coverage claim is available. The local summary artifact reports coverage and width at every supported step (1-180 for 180d and 1-364 for 365d). Overlapping origins and the small eligible sample make these results diagnostic only.
 - The phase 4/5/6 rows above point to the TimesFM interval-fix reruns. They supersede `outputs_opening_phase4_statsmodels_timesfm25_venv`, `outputs_opening_phase5_statsmodels_timesfm25_venv`, and `outputs_opening_phase6_statsmodels_timesfm25_venv`, where standalone `timesfm_2_5` was missing from phase-4 interval calibration and got zero-width 91-day intervals. Point forecasts/WAPE are identical between the two; only standalone TimesFM interval metrics changed (91-day coverage_80 0.000 → 0.857, coverage_95 0.000 → 0.945).
 - Older and scratch output directories were moved to `archive/run_outputs_2026-06-01/` during cleanup. The table above lists the retained root-level artifacts.
 
@@ -81,12 +102,72 @@ Latest key validation metrics:
 | 365 | `nested_convex_stack` | 0.0806 | -0.0415 | 1 nested fold (2026-06-10) |
 | 365 | `phase3_heldout_cutoffs_convex_stack` | 0.0563 | -0.0080 | 3 rolling cutoffs (contaminated; see caveat) |
 
+Challenger evidence scorecard refreshed 2026-09-17:
+
+| Evidence stage | Horizon | Origins / availability | Windows (effective approx.) | Incumbent WAPE | Challenger WAPE | Wins | Verdict |
+|---|---:|---|---:|---:|---:|---:|---|
+| Confirmation | 28d | 2026-04-11 to 2026-08-01 | 5 (5.00) | 0.05822 | 0.05646 | 3/5 | Supportive but inconsistent; keep the frozen 75/25 blend diagnostic |
+| Confirmation | 91d | 2026-04-04 to 2026-05-30 | 3 (1.62) | 0.06270 | 0.06095 | 3/3 | Supportive but highly overlapping; keep diagnostic |
+| Confirmation | 180d / 365d | No post-registration windows complete | 0 | — | — | — | Awaiting evidence; do not extrapolate the 28/91 verdict |
+| Exploration | 26w | 2024-09-11 to 2025-09-10 | 14 (3.00) | 0.05205 | 0.05065 | 12/14 | Exploratory edge; HAC p=0.017, block CI below zero |
+| Confirmation | 26w | 2025-10-08 to 2026-02-25 | 6 (1.77) | 0.03511 | 0.03658 | 2/6 | Failed confirmation; mean difference +0.00147, worst loss +0.00478 |
+| Production | Daily 28/91/180/365 | Current package | — | `seasonal_naive_lag_364` | Diagnostics only | — | No change |
+| Production | Weekly 26w | Current package | — | `daily_reagg_seasonal_naive_lag_365` | Diagnostic row only | — | No change |
+
+New-model screen completed 2026-09-21:
+
+| Horizon | Candidate | Mean WAPE | Mean bias | Wins vs naive | Verdict |
+|---:|---|---:|---:|---:|---|
+| 28d | `tirex_2` | 0.07693 | -0.01411 | 1/6 | Reject standalone |
+| 28d | `blend_snl75_tirex25` | 0.05852 | -0.00998 | 3/6 | Reject; worse than frozen naive/TimesFM blend at 0.05685 |
+| 91d | `tirex_2` | 0.09202 | -0.01008 | 0/8 | Reject standalone |
+| 91d | `blend_snl75_tirex25` | 0.06256 | -0.00697 | 7/8 | Reject; worse than frozen naive/TimesFM blend at 0.06084 |
+| 28d | `tabpfn_ts_3_5` | 0.05656 | -0.01506 | 4/6 | Reject standalone |
+| 28d | `blend_snl75_tabpfn25` | 0.05671 | -0.01022 | 4/6 | Frozen reject solely on bias guardrail; WAPE winner and promising fresh-confirmation candidate |
+| 91d | `tabpfn_ts_3_5` | 0.06842 | 0.00175 | 3/8 | Reject standalone |
+| 91d | `blend_snl75_tabpfn25` | 0.06146 | -0.00401 | 8/8 | Reject; worse than frozen naive/TimesFM blend at 0.06084 |
+| 28d | `google_tabfm_1_0_0` | 0.06827 | 0.01791 | 2/6 | Reject standalone |
+| 28d | `blend_snl75_google_tabfm25` | 0.05765 | -0.00198 | 3/6 | Reject; beats naive and has best median/bias, but trails TimesFM blend and has larger worst loss |
+| 91d | `google_tabfm_1_0_0` | 0.09636 | 0.03403 | 1/8 | Reject standalone |
+| 91d | `blend_snl75_google_tabfm25` | 0.06489 | 0.00406 | 6/8 | Reject; effectively ties naive but trails TimesFM blend at 0.06084 and has larger worst loss |
+
+These are historical exploratory windows from the frozen August data snapshot,
+not fresh confirmation. TiRex-2 used checkpoint
+`NX-AI/TiRex-2@05e5b26db52bfb256f1ae1bdf785589850482de3` in an isolated CPU
+environment. Torch 2.8 required `triton-windows==3.4.0.post21`; no production
+environment changed. TabPFN-TS used the pinned local TabPFN-3.5 checkpoint in
+an isolated CUDA environment after the research terms were accepted; cloud mode
+was not used. Its fixed blend failed the pre-registered gate at both horizons.
+At 28d it nevertheless beat both WAPE comparators and missed only the absolute-
+bias guardrail by 0.161 percentage points versus naive; preserve the frozen
+verdict but treat it as a promising candidate for pre-registered fresh confirmation.
+The non-commercial weights remain ineligible for business production without a
+separate commercial license.
+
+Google TabFM used the separately registered direct feature recipe in
+`tabfm_screen_registration.json`, local checkpoint revision
+`77cb9cc1b4fd3a9c77fbb9552c218200bb4dab83`, and the existing isolated CUDA
+environment. Its blend improved mean WAPE versus naive and had the best median
+and bias, but failed both the TimesFM mean-WAPE comparison and the registered
+worst-window-loss guardrail. Keep it only for error-diversity analysis; do not
+advance it to fresh confirmation or production. The requested 91-day extension
+strengthened that verdict: the blend's 0.064886 WAPE was only 0.000011 better
+than naive and materially worse than the 0.060840 TimesFM blend, while its
+worst-window loss versus naive was 0.00723. Its weights are non-commercial.
+
+The registered NeuralProphet screen completed 2026-09-25 on the same historical 28/91-day windows (`outputs_neuralprophet_screen_sep2026`). Standalone trend/seasonal NeuralProphet scored mean WAPE 0.07582/0.10664, and its 91-lag AR variant scored 0.12534/0.15595, at 28/91 days respectively. The fixed 75/25 naive/trend blend narrowly cleared the exploratory 28d gate: WAPE 0.05618 versus 0.05685 for the frozen naive/TimesFM blend, with smaller absolute bias and worst-window loss; retain it only for fresh confirmation. Its 91d WAPE was 0.06360 versus 0.06084 for naive/TimesFM. The additional frozen three-member naive/TimesFM/trend blend scored 0.05629 at 28d, also only diagnostic; all AR and 91d blends were rejected. Production defaults remain seasonal naive.
+
+The requested 365d extension reused the same recipes on two approximately non-overlapping windows (`outputs_neuralprophet_365d_sep2026`). Mean WAPE was 0.08518 for seasonal naive, 0.07551 for the frozen naive/TimesFM blend, 0.12407 for standalone NeuralProphet trend and 0.23844 for standalone AR. Fixed 75/25 naive/NeuralProphet blends scored 0.08155 (trend) and 0.09409 (AR), both worse than naive/TimesFM. The trend standalone won the older window but failed the latest (0.15814 versus 0.06184 naive); AR lost both. This is evidence against these aggregate daily-sales recipes for annual forecasting, not a verdict on a differently configured team tool. Production defaults remain unchanged.
+
+The daily source snapshot remains `latest_sls_aug.csv` through 2026-08-29 with SHA-256 `7639a348c80c4068cbebea18464a040525907121480102be0189bb3edd47399e`; rerunning the exact scorecard therefore adds no newer daily windows. The weekly refresh used the exact six-member pool recorded in `outputs_weekly_multifold_26w_trend_seasonal_pool/manifest.json`, no degraded models and no filled dates.
+
 Seasonal trend/averaging experiment added 2026-06-25:
 
 - Added level-scaled seasonal naive (`seasonal_naive_scaled_lag_*`) and recency-weighted multi-year seasonal average (`seasonal_average_lag_*`) candidates at daily and weekly grains.
 - Standalone scaled and multi-year candidates did not beat the current daily or weekly champions. The 4-week/full scaling was especially volatile; the 8-week damped scaling was closer but still worse than the simple seasonal champion.
 - Daily seasonal-only `nested_inverse_wape_stack` is worth tracking as a challenger at 91 and 180 days: 91d mean WAPE 0.0748 vs 0.0757 for `seasonal_naive_lag_364` (3/5 wins), and 180d mean WAPE 0.0611 vs 0.0638 (4/5 wins). Keep `seasonal_naive_lag_364` as production because the 91d gain is tiny, 91/180 folds overlap, and production packaging is still benchmark-first.
 - Weekly `pool_median` of the lag-365 reaggregation and seasonal trend variants barely edged standalone lag-365 at 26w (0.0348 vs 0.0352, 3/5 wins) and 52w (0.03469 vs 0.03471, 1/2 wins). Treat this as a long-horizon sensitivity read, not a default change, because those folds are heavily overlapping and the improvement is within noise. At 4w and 12w, standalone `daily_reagg_seasonal_naive_lag_365` remains best.
+- The fixed 26w pool failed its September confirmation refresh: `pool_median` WAPE 0.03658 vs 0.03511 for standalone lag-365 across six newly matured windows, winning 2/6. Keep lag-365 as production and the packaged pool median as a diagnostic row only.
 
 Overlap-aware significance tests added 2026-06-25:
 
@@ -105,7 +186,7 @@ Interval coverage backtest added 2026-06-25:
 
 - Holiday-anchor-aware seasonal naive is rejected. Daily 180d was directionally better (mean WAPE diff -0.0024) but not significant (HAC p=0.409; block CI crossed zero); 28d/91d/365d lost. Weekly holiday-anchor reaggregation lost to `daily_reagg_seasonal_naive_lag_365` at all four horizons, with mean WAPE losses of about +0.0022 to +0.0025. Segment summaries show holiday-week gains offset by larger rest-week degradation.
 - Interval `shrunken` mode is implemented for backtests and production packagers, but not adopted as default. k=10/30/60 did not meet weekly coverage gates, and wider global calibration windows reduced 80% weekly coverage. Keep `--interval-mode global --interval-windows 8`.
-- `run_weekly_production_forecast.py` now emits `challenger_26w_pool_median_trend_seasonal` with intervals. Track it; do not promote until future realized monitor windows support it.
+- `run_weekly_production_forecast.py` emits `challenger_26w_pool_median_trend_seasonal` with intervals. Its first refresh failed confirmation; retain it only as a diagnostic row.
 - `run_forecast_monitor.py` appends relative-only realized WAPE, bias pct, interval coverage, final-vs-challenger verdicts, and CUSUM alarm state. The current local sales file ends at 2026-04-01, so the 2026-04-01-cutoff forecast package has no realized future rows yet.
 - `run_residual_covariate_model.py` scored `residual_ridge_f1` and `residual_ridge_f1f2` across all daily and weekly horizons. Both are rejected: every mean WAPE diff versus the champion was positive, from +0.041 at daily 28d for F1F2 to +0.143 at weekly 52w for F1F2. The harness remains useful for future known-ahead promo covariates.
 
@@ -449,7 +530,7 @@ python run_forecast_monitor.py `
   --log-csv outputs_forecast_monitor/monitoring_log.csv
 ```
 
-The monitor uses explicit row horizon/grain metadata and manifest-provided interval grids when available. Legacy forecast files still fall back to model-name parsing and the original 28/91/180/365 or 4/12/26/52 buckets.
+The monitor uses explicit row horizon/grain metadata and manifest-provided interval grids when available. When the supplied production file has a packaged sibling `diagnostic_forecast.csv`, the monitor reads that file automatically so challenger rows are adjudicated. Legacy forecast files still fall back to model-name parsing and the original 28/91/180/365 or 4/12/26/52 buckets.
 
 ## Implementation Commands
 
@@ -646,8 +727,9 @@ Suggested table:
 4. Done: add a new-unit ramp-curve estimator, pending unit-level input data.
 5. Done: add model cards for each production candidate, including intended use, validation horizon, and counterfactual suitability.
 6. Done (2026-06-10): multi-fold nested final validation at 91 days (`run_multifold_final_validation.py`); seasonal naive won all 5 folds and is now the 91-day production recommendation.
-7. In progress (2026-06-10): `explore_naive_beaters.py` swept parameter-free candidates over all grid windows from the four multifold runs. A fixed 0.75 seasonal-naive / 0.25 TimesFM blend beat plain seasonal naive in 25/29 windows at 28 days, 24/27 at 91 days, 19/23 at 180 days, and 16/17 at 365 days (recent-6 windows: 5/6, 6/6, 3/6, 5/6), with worst single-window losses of +0.008/+0.000/+0.004/+0.001 WAPE respectively. The pattern holds at 62/38 and 50/50, so it is not ratio-mined. Pre-registered pick: **75/25**. Track it against seasonal naive on future windows; promote to production after it holds out-of-exploration. Notes: at 180 days the recent edge is roughly neutral, and growth-adjusted seasonal naive (the best non-foundation fallback at short horizons) degrades badly at 365 days because a trailing YoY ratio does not persist a year out.
+7. Implemented and tracking (refreshed 2026-09-17): `explore_naive_beaters.py` writes a durable exploration-versus-holdout scorecard for the pre-registered fixed 0.75 seasonal-naive / 0.25 TimesFM blend. The source snapshot is unchanged through 2026-08-29, so the confirmation metrics remain 28d 0.0582 -> 0.0565 across 5 non-overlapping windows (3/5 wins, worst loss +0.0033) and 91d 0.0627 -> 0.0610 across 3 overlapping windows (3/3 wins, about 1.62 effective windows). No post-registration 180/365-day windows are available. Keep it as a packaged diagnostic challenger. Artifacts: `outputs_naive_timesfm_challenger_sep2026`, `outputs_production_forecast_aug2026`, and `outputs_forecast_monitor_aug2026`.
 8. Done (2026-06-10): multi-fold nested validation at 28 days (6 non-overlapping folds, run_id `20260610T044622Z`); seasonal naive won 4 of 6 folds and is now the 28-day production recommendation, with Extra Trees retained as the opening-aware scenario model.
 9. Done (2026-06-10): multi-fold nested validation at 180 days (5 folds, run_id `20260610T112337Z`) and 365 days (1 feasible fold, run_id `20260610T113121Z`); seasonal naive won everywhere and the long-horizon stacks were demoted to sensitivity comparators. Their earlier focused-run wins traced to weight-fitting windows overlapping the eval windows by ~5 and ~11 months.
 10. Done (2026-06-10): `opening_info.csv` grew from 4 to 10 openings (2 with fully observed ramps, 3 planned after the current data end). The 28/91-day multifold runs were rerun with the new file (run_ids `20260610T124426Z`/`20260610T124857Z`): no verdict changed, and richer opening features slightly worsened the opening-aware ML models. The aggregate event study found per-unit lift unidentifiable (see the warning in section 4). The production forecast manifest now lists planned openings inside each forecast window as an explicit unquantified caveat.
 11. Done (2026-07-09): multi-fold validation now audits and discloses missing-date filling. A fixed daily lag-364/lag-365 calendar blend was also tested and rejected at every horizon; no production model changed.
+12. Done (2026-09-17): refreshed the exact registered weekly 26w trend/seasonal pool on `latest_sls_aug.csv`. The `pool_median` failed confirmation (WAPE 0.03658 vs 0.03511 for lag-365; 2/6 wins on heavily overlapping windows), so the weekly production default is unchanged.

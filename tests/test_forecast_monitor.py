@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
-from run_forecast_monitor import append_monitor_rows, cusum_series, grid_path_for_final, infer_grain, model_summary_rows
+from run_forecast_monitor import append_monitor_rows, cusum_series, grid_path_for_final, infer_grain, model_summary_rows, resolve_forecast_csv
 
 
 def test_cusum_series_accumulates_one_sided_bias() -> None:
@@ -38,6 +40,9 @@ def test_append_monitor_rows_is_idempotent(tmp_path) -> None:
     assert append_monitor_rows(log_csv, [row]) == 1
     assert append_monitor_rows(log_csv, [row]) == 0
     assert len(pd.read_csv(log_csv)) == 1
+
+    assert append_monitor_rows(log_csv, [{**row, "rows": 4}]) == 1
+    assert len(pd.read_csv(log_csv)) == 2
 
 
 def test_append_monitor_rows_recognizes_legacy_key(tmp_path) -> None:
@@ -90,3 +95,23 @@ def test_monitor_uses_explicit_custom_horizon_metadata(tmp_path) -> None:
     assert rows[0]["evaluation_window"] == "<= 45d"
     manifest = {"interval_sources": {"45": {"grid": "cached/45/grid.csv"}}}
     assert grid_path_for_final("final_custom_model", 45, "daily", manifest).as_posix() == "cached/45/grid.csv"
+
+
+def test_monitor_resolves_packaged_challenger_diagnostics(tmp_path) -> None:
+    production = tmp_path / "production_forecast.csv"
+    diagnostic = tmp_path / "diagnostic_forecast.csv"
+    production.touch()
+    diagnostic.touch()
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifacts": {
+                    "production_forecast": production.name,
+                    "diagnostic_forecast": diagnostic.name,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert resolve_forecast_csv(production) == diagnostic
